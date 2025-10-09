@@ -4,6 +4,16 @@ const path = require('path');
 
 async function build() {
   const distDir = 'dist';
+
+  // Read VAPID public key from environment variables
+  const vapidPublicKey = process.env.VITE_VAPID_PUBLIC_KEY;
+
+  if (!vapidPublicKey) {
+    console.error('\x1b[31m%s\x1b[0m', 'Error: VITE_VAPID_PUBLIC_KEY environment variable is not set.');
+    console.error('Please provide the VAPID public key to build the application.');
+    process.exit(1);
+  }
+
   // Ensure the dist directory is clean
   await fs.rm(distDir, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(distDir, { recursive: true });
@@ -15,7 +25,11 @@ async function build() {
     minify: true,
     sourcemap: true,
     outfile: path.join(distDir, 'index.js'),
-    define: { 'process.env.NODE_ENV': '"production"' },
+    define: { 
+      'process.env.NODE_ENV': '"production"',
+      // Inject the env variable into the frontend code to be accessed via import.meta.env
+      'import.meta.env.VITE_VAPID_PUBLIC_KEY': `"${vapidPublicKey}"`,
+    },
     loader: { '.tsx': 'tsx' },
   }).catch(() => process.exit(1));
 

@@ -1,11 +1,14 @@
+
 import React, { useState, useEffect } from 'react';
 import { NotificationIcon } from './components/NotificationIcon';
 import { CheckCircleIcon } from './components/CheckCircleIcon';
 import { XCircleIcon } from './components/XCircleIcon';
 import { InfoIcon } from './components/InfoIcon';
 
-// Replace with your actual VAPID public key
-const VAPID_PUBLIC_KEY = 'BOM3zO3g-52yphLfUgFwSLo-J0g_sBv2Vsc6nK35xms_1aK-5yF5d2-EHRO-m3sWcce-rJv3l_4QZ-VzY-I-1Sg';
+// Read the VAPID public key from Vite's environment variables
+// FIX: Add type assertion to fix "Property 'env' does not exist on type 'ImportMeta'".
+// This is required as the project doesn't have a vite-env.d.ts file to declare the type for import.meta.env.
+const VAPID_PUBLIC_KEY = (import.meta as { env: { VITE_VAPID_PUBLIC_KEY?: string } }).env.VITE_VAPID_PUBLIC_KEY;
 
 // Converts the VAPID public key string to a Uint8Array
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -48,7 +51,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleSubscribe = async () => {
-    if (isLoading) return;
+    if (isLoading || !VAPID_PUBLIC_KEY) return;
     setIsLoading(true);
 
     try {
@@ -87,6 +90,25 @@ const App: React.FC = () => {
     });
   };
   
+  // Display a warning if the VAPID key is not configured
+  if (!VAPID_PUBLIC_KEY) {
+    return (
+      <main className="bg-gray-900 min-h-screen flex flex-col items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-md bg-gray-800 rounded-2xl shadow-2xl p-8 border border-red-500/50">
+          <div className="text-center">
+            <XCircleIcon className="w-16 h-16 mx-auto text-red-400 mb-4" />
+            <h1 className="text-2xl font-bold text-white">Configuração Incompleta</h1>
+            <p className="text-gray-400 mt-2">
+              A chave pública VAPID não foi encontrada. Por favor, defina a variável de ambiente{' '}
+              <code className="bg-gray-700 text-yellow-300 px-2 py-1 rounded-md text-sm">VITE_VAPID_PUBLIC_KEY</code>{' '}
+              e reconstrua a aplicação.
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   const renderSubscriptionDetails = () => (
     <div className="text-center">
       <CheckCircleIcon className="w-16 h-16 mx-auto text-green-400 mb-4" />
@@ -165,6 +187,9 @@ const App: React.FC = () => {
       </div>
        <footer className="text-center mt-8 text-gray-500 text-sm">
         <p>Criado com React & Tailwind CSS</p>
+        <p className="mt-2">
+          Chave VAPID em uso: <span className="font-mono bg-gray-700 text-white px-2 py-1 rounded-md text-xs">{`${VAPID_PUBLIC_KEY.substring(0, 6)}...${VAPID_PUBLIC_KEY.substring(VAPID_PUBLIC_KEY.length - 6)}`}</span>
+        </p>
       </footer>
     </main>
   );
