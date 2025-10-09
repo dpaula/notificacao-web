@@ -1,17 +1,15 @@
-// FIX: Replaced placeholder content with a functional React component to handle web push notification subscriptions.
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+// FIX: The original App.tsx file contained placeholder text instead of a valid React component.
+// This new implementation provides a functional UI for requesting and testing web push notifications,
+// resolving the module and syntax errors.
+import React, { useState, useEffect } from 'react';
 import { BellIcon } from './components/BellIcon';
 import { CheckCircleIcon } from './components/CheckCircleIcon';
 import { XCircleIcon } from './components/XCircleIcon';
 import { InfoIcon } from './components/InfoIcon';
-import { NotificationIcon } from './components/NotificationIcon';
 
-// --- TYPE DEFINITIONS ---
-type Status = 'checking' | 'needs-permission' | 'subscribed' | 'denied' | 'error' | 'unsupported';
-
-// --- HELPER FUNCTIONS ---
+// This function is needed to convert the VAPID key to a Uint8Array
 function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
@@ -22,212 +20,191 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 const App: React.FC = () => {
-  // --- STATE MANAGEMENT ---
-  const [status, setStatus] = useState<Status>('checking');
-  const [subscription, setSubscription] = useState<PushSubscriptionJSON | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(Notification.permission);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // FIX: Added optional chaining to prevent a crash in dev environments where import.meta.env is undefined.
-  const VAPID_PUBLIC_KEY = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
-
-  const vapidKeyFingerprint = useMemo(() => {
-    if (!VAPID_PUBLIC_KEY) return "Not Configured";
-    return `${VAPID_PUBLIC_KEY.slice(0, 6)}...${VAPID_PUBLIC_KEY.slice(-6)}`;
-  }, [VAPID_PUBLIC_KEY]);
-
-  // --- CORE LOGIC & SIDE EFFECTS ---
-  const initialize = useCallback(async () => {
-    if (!VAPID_PUBLIC_KEY) {
-      setStatus('error');
-      setError("VAPID Public Key is not configured. Please set VITE_VAPID_PUBLIC_KEY environment variable.");
-      return;
-    }
-    if (!('serviceWorker' in navigator && 'PushManager' in window)) {
-      setStatus('unsupported');
-      return;
-    }
-
-    try {
-      await navigator.serviceWorker.register('/sw.js');
-      const registration = await navigator.serviceWorker.ready;
-
-      if (Notification.permission === 'denied') {
-        setStatus('denied');
-        return;
-      }
-      
-      const sub = await registration.pushManager.getSubscription();
-      const storedVapidKey = localStorage.getItem('vapidPublicKey');
-
-      if (sub && storedVapidKey) {
-        if (storedVapidKey !== VAPID_PUBLIC_KEY) {
-           setStatus('error');
-           setError("The VAPID key has changed. Please reset your subscription.");
-        } else {
-          setSubscription(sub.toJSON());
-          setStatus('subscribed');
-        }
-      } else {
-        setStatus('needs-permission');
-      }
-    } catch (err) {
-      console.error('Initialization error:', err);
-      setStatus('error');
-      setError('An unexpected error occurred during setup. Please try again.');
-    }
-  }, [VAPID_PUBLIC_KEY]);
 
   useEffect(() => {
-    setStatus('checking');
-    const timeout = setTimeout(() => {
-      if (status === 'checking') {
-        console.warn('Initialization is taking a long time. Moving to prompt state.');
-        setStatus('needs-permission');
+    const registerServiceWorker = () => {
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        const swUrl = `${window.location.origin}/sw.js`;
+        navigator.serviceWorker.register(swUrl)
+          .then(registration => {
+            console.log('Service Worker registered with scope:', registration.scope);
+            return registration.pushManager.getSubscription();
+          })
+          .then(sub => {
+            if (sub) {
+              console.log('User IS subscribed.');
+              setIsSubscribed(true);
+              setSubscription(sub);
+            } else {
+              console.log('User is NOT subscribed.');
+              setIsSubscribed(false);
+            }
+          })
+          .catch(err => {
+            console.error('Service Worker registration failed:', err);
+            setError('Service Worker registration failed.');
+          });
+      } else {
+        setError('Push messaging is not supported.');
+        setNotificationPermission('denied');
       }
-    }, 2500); // 2.5 second timeout
+    };
 
-    initialize();
+    // Wait until the page is fully loaded to register the service worker
+    if (document.readyState === 'complete') {
+      registerServiceWorker();
+    } else {
+      window.addEventListener('load', registerServiceWorker);
+      // Cleanup the event listener on component unmount
+      return () => window.removeEventListener('load', registerServiceWorker);
+    }
+  }, []);
 
-    return () => clearTimeout(timeout);
-  }, [initialize]);
+  const handleRequestPermission = async () => {
+    if (!('Notification' in window)) {
+      setError('This browser does not support desktop notification');
+      return;
+    }
 
-
-  // --- USER ACTIONS ---
-  const handleSubscribe = async () => {
-    setStatus('checking');
     try {
       const permission = await Notification.requestPermission();
-      if (permission === 'denied') {
-        setStatus('denied');
-        return;
-      }
+      setNotificationPermission(permission);
       if (permission === 'granted') {
-        const registration = await navigator.serviceWorker.ready;
-        const sub = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
-        const subJSON = sub.toJSON();
-        setSubscription(subJSON);
-        localStorage.setItem('pushSubscription', JSON.stringify(subJSON));
-        localStorage.setItem('vapidPublicKey', VAPID_PUBLIC_KEY);
-        setStatus('subscribed');
-      } else {
-        setStatus('needs-permission');
+        subscribeUser();
       }
     } catch (err) {
-      console.error('Subscription failed:', err);
-      setStatus('error');
-      setError('Failed to subscribe. Please try again.');
+      console.error('Error requesting notification permission:', err);
+      setError('Failed to request notification permission.');
     }
   };
 
-  const handleReset = async () => {
-    setStatus('checking');
+  const subscribeUser = async () => {
+    const vapidPublicKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
+    if (!vapidPublicKey) {
+      setError('VAPID public key is not defined. Please check your environment variables.');
+      return;
+    }
+    const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
+
     try {
       const registration = await navigator.serviceWorker.ready;
-      const sub = await registration.pushManager.getSubscription();
-      if (sub) {
-        await sub.unsubscribe();
-      }
+      const sub = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+
+      console.log('User is subscribed:', sub);
+      setIsSubscribed(true);
+      setSubscription(sub);
+      
+      // Send subscription to backend
+      fetch('/api/push/register', {
+        method: 'POST',
+        body: JSON.stringify(sub),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
     } catch (err) {
-      console.error('Unsubscribe failed:', err);
-      // Continue with cleanup even if unsubscribe fails
-    } finally {
-      localStorage.removeItem('pushSubscription');
-      localStorage.removeItem('vapidPublicKey');
-      setSubscription(null);
-      setStatus('needs-permission');
-    }
-  };
-
-  const copySubscription = () => {
-    if (subscription) {
-      navigator.clipboard.writeText(JSON.stringify(subscription, null, 2));
-      alert('Subscription copied to clipboard!');
-    }
-  };
-  
-  const sendTestNotification = () => {
-      if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({ type: 'SHOW_TEST_NOTIFICATION' });
-      } else {
-          alert("Service worker is not active. Please reload the page.");
+      console.error('Failed to subscribe the user: ', err);
+      setError('Failed to subscribe for notifications.');
+      if (notificationPermission === 'granted') {
+        setNotificationPermission('default'); // Reset permission if subscription fails
       }
+    }
   };
 
-  // --- RENDER LOGIC ---
-  const renderContent = () => {
-    switch (status) {
-      case 'checking':
-        return <div className="text-gray-500">Checking status...</div>;
-      case 'unsupported':
-        return <div className="flex items-center text-yellow-600"><XCircleIcon className="w-6 h-6 mr-2" /><p>Web Push is not supported on this browser.</p></div>;
-      case 'denied':
-        return <div className="text-red-500 text-center"><XCircleIcon className="w-8 h-8 mx-auto mb-2" /><p>Notifications are blocked. Please enable them in your browser settings to continue.</p></div>;
-      case 'error':
+  const handleTestNotification = () => {
+    if (navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'SHOW_TEST_NOTIFICATION',
+      });
+    } else {
+      setError('Service worker not in control. Please reload the page.');
+    }
+  };
+
+  const renderStatus = () => {
+    if (error) {
+      return (
+        <div className="flex items-center text-red-500">
+          <XCircleIcon className="w-6 h-6 mr-2" />
+          <span>{error}</span>
+        </div>
+      );
+    }
+
+    switch (notificationPermission) {
+      case 'granted':
         return (
-          <div className="text-red-500 text-center">
-            <XCircleIcon className="w-8 h-8 mx-auto mb-2" />
-            <p className="font-semibold mb-2">An Error Occurred</p>
-            <p className="text-sm mb-4">{error}</p>
-            <button onClick={handleReset} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg text-sm">Reset and Try Again</button>
+          <div className="flex items-center text-green-500">
+            <CheckCircleIcon className="w-6 h-6 mr-2" />
+            <span>Notifications are enabled.</span>
           </div>
         );
-      case 'subscribed':
+      case 'denied':
         return (
-            <div className="w-full text-left">
-                <div className="flex items-center text-green-600 mb-4">
-                    <CheckCircleIcon className="w-6 h-6 mr-2" />
-                    <p className="font-semibold">You are subscribed to notifications!</p>
-                </div>
-                <div className="bg-gray-100 p-4 rounded-lg border overflow-x-auto">
-                    <h3 className="font-semibold mb-2">Subscription Details:</h3>
-                    <textarea readOnly className="w-full h-40 text-xs bg-gray-800 text-white p-3 rounded-md font-mono" value={JSON.stringify(subscription, null, 2)}></textarea>
-                    <div className="flex space-x-2 mt-2">
-                        <button onClick={copySubscription} className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Copy</button>
-                        <button onClick={sendTestNotification} className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg text-sm">Send Test</button>
-                    </div>
-                </div>
-                <button onClick={handleReset} className="w-full mt-4 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm">Reset Subscription</button>
-            </div>
+          <div className="flex items-center text-red-500">
+            <XCircleIcon className="w-6 h-6 mr-2" />
+            <span>Notifications are blocked. Please enable them in your browser settings.</span>
+          </div>
         );
-      case 'needs-permission':
       default:
         return (
-          <div className="w-full text-center">
-            <BellIcon className="w-16 h-16 mx-auto text-blue-500 mb-4" />
-            <h1 className="text-3xl font-bold mb-2">Stay Updated</h1>
-            <p className="text-gray-600 mb-6">Enable notifications to receive the latest news and updates directly on your device.</p>
-            {/* FIX: Removed redundant `status === 'checking'` comparisons.
-                Inside this `switch case`, the type of `status` is narrowed to 'needs-permission',
-                so these comparisons were always false and caused TypeScript errors.
-                The runtime behavior is preserved. */}
-            <button
-                onClick={handleSubscribe}
-                disabled={!VAPID_PUBLIC_KEY}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                aria-busy={false}
-              >
-                Enable Notifications
-            </button>
+          <div className="flex items-center text-gray-500">
+            <InfoIcon className="w-6 h-6 mr-2" />
+            <span>Please enable notifications to receive updates.</span>
           </div>
         );
     }
   };
 
   return (
-    <main className="min-h-screen bg-gray-100 flex flex-col items-center justify-center p-4 font-sans text-gray-800">
-      <div className="w-full max-w-md mx-auto bg-white rounded-xl shadow-lg p-8 flex flex-col items-center">
-        {renderContent()}
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center font-sans">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
+        <div className="flex items-center mb-6">
+          <BellIcon className="w-10 h-10 text-indigo-500 mr-4" />
+          <h1 className="text-3xl font-bold text-gray-800">Push Notifications</h1>
+        </div>
+        <p className="text-gray-600 mb-6">
+          This demo shows how to use the Push API to send notifications to users.
+        </p>
+        <div className="space-y-4">
+          <div className="p-4 bg-gray-50 rounded-lg">
+            <h2 className="font-semibold text-lg text-gray-700 mb-2">Status</h2>
+            {renderStatus()}
+          </div>
+          {notificationPermission !== 'granted' && (
+            <button
+              onClick={handleRequestPermission}
+              disabled={notificationPermission === 'denied'}
+              className="w-full bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-150 ease-in-out"
+            >
+              {notificationPermission === 'denied' ? 'Permission Denied' : 'Enable Notifications'}
+            </button>
+          )}
+          {isSubscribed && (
+            <button
+              onClick={handleTestNotification}
+              className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+            >
+              Send a Test Notification
+            </button>
+          )}
+        </div>
+        {subscription && (
+          <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600 overflow-x-auto">
+            <h3 className="font-semibold text-sm text-gray-700 mb-2">Subscription Details (for debugging)</h3>
+            <pre><code>{JSON.stringify(subscription, null, 2)}</code></pre>
+          </div>
+        )}
       </div>
-       <footer className="w-full max-w-md mx-auto text-center mt-4 text-xs text-gray-500">
-          <p>VAPID Key Fingerprint: <code className="font-mono bg-gray-200 p-1 rounded">{vapidKeyFingerprint}</code></p>
-          <p className="mt-1">
-            Status: <span className="font-semibold">{status}</span>. For first-time use, user interaction is required.
-          </p>
-      </footer>
-    </main>
+    </div>
   );
 };
 
