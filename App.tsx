@@ -1,7 +1,7 @@
 // FIX: The original App.tsx file contained placeholder text instead of a valid React component.
 // This new implementation provides a functional UI for requesting and testing web push notifications,
 // resolving the module and syntax errors.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BellIcon } from './components/BellIcon';
 import { CheckCircleIcon } from './components/CheckCircleIcon';
 import { XCircleIcon } from './components/XCircleIcon';
@@ -20,18 +20,48 @@ function urlBase64ToUint8Array(base64String: string) {
 }
 
 const App: React.FC = () => {
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(Notification.permission);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [keyMismatchError, setKeyMismatchError] = useState<boolean>(false);
 
+  const frontendVapidKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
+
+  const checkVapidKeyMatch = useCallback(async () => {
+    if (!frontendVapidKey) {
+        setError("Frontend VAPID public key is not defined.");
+        return;
+    }
+    try {
+        const response = await fetch('/api/vapid-key');
+        if (!response.ok) {
+            throw new Error('Failed to fetch key from server.');
+        }
+        const { publicKey: backendVapidKey } = await response.json();
+        
+        if (frontendVapidKey !== backendVapidKey) {
+            setKeyMismatchError(true);
+            setError("Configuration Error: Frontend and Backend VAPID keys do not match. Please clear site data and ensure the app is redeployed correctly.");
+        } else {
+            console.log("VAPID keys match between frontend and backend.");
+        }
+    } catch (e) {
+        console.error("Could not verify VAPID key with backend:", e);
+        setError("Could not verify configuration with the server. Please check the connection.");
+    }
+  }, [frontendVapidKey]);
+  
   useEffect(() => {
+    checkVapidKeyMatch();
+
     const registerServiceWorker = () => {
       if ('serviceWorker' in navigator && 'PushManager' in window) {
         const swUrl = `${window.location.origin}/sw.js`;
         navigator.serviceWorker.register(swUrl)
           .then(registration => {
             console.log('Service Worker registered with scope:', registration.scope);
+            setNotificationPermission(Notification.permission);
             return registration.pushManager.getSubscription();
           })
           .then(sub => {
@@ -54,17 +84,16 @@ const App: React.FC = () => {
       }
     };
 
-    // Wait until the page is fully loaded to register the service worker
     if (document.readyState === 'complete') {
       registerServiceWorker();
     } else {
       window.addEventListener('load', registerServiceWorker);
-      // Cleanup the event listener on component unmount
       return () => window.removeEventListener('load', registerServiceWorker);
     }
-  }, []);
+  }, [checkVapidKeyMatch]);
 
   const handleRequestPermission = async () => {
+    if (keyMismatchError) return;
     if (!('Notification' in window)) {
       setError('This browser does not support desktop notification');
       return;
@@ -83,12 +112,11 @@ const App: React.FC = () => {
   };
 
   const subscribeUser = async () => {
-    const vapidPublicKey = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
-    if (!vapidPublicKey) {
+    if (!frontendVapidKey) {
       setError('VAPID public key is not defined. Please check your environment variables.');
       return;
     }
-    const applicationServerKey = urlBase64ToUint8Array(vapidPublicKey);
+    const applicationServerKey = urlBase64ToUint8Array(frontendVapidKey);
 
     try {
       const registration = await navigator.serviceWorker.ready;
@@ -102,7 +130,7 @@ const App: React.FC = () => {
       setSubscription(sub);
       
       // Send subscription to backend
-      fetch('/api/push/register', {
+      await fetch('/api/push/register', {
         method: 'POST',
         body: JSON.stringify(sub),
         headers: {
@@ -116,6 +144,31 @@ const App: React.FC = () => {
       if (notificationPermission === 'granted') {
         setNotificationPermission('default'); // Reset permission if subscription fails
       }
+    }
+  };
+  
+  const handleReset = async () => {
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const sub = await registration.pushManager.getSubscription();
+        if (sub) {
+            await sub.unsubscribe();
+            console.log('User unsubscribed.');
+        }
+        await fetch('/api/push/last-subscription', { method: 'DELETE' });
+        console.log('Subscription cleared from backend.');
+        
+        setIsSubscribed(false);
+        setSubscription(null);
+        setNotificationPermission('default');
+        setError(null);
+        
+        // After resetting, re-check the key match and SW status
+        await checkVapidKeyMatch();
+
+    } catch (err) {
+        console.error('Error during reset:', err);
+        setError('Failed to reset subscription. Please clear site data manually.');
     }
   };
 
@@ -138,7 +191,7 @@ const App: React.FC = () => {
         </div>
       );
     }
-
+    // ... rest of the renderStatus function ...
     switch (notificationPermission) {
       case 'granted':
         return (
@@ -171,37 +224,56 @@ const App: React.FC = () => {
           <BellIcon className="w-10 h-10 text-indigo-500 mr-4" />
           <h1 className="text-3xl font-bold text-gray-800">Push Notifications</h1>
         </div>
-        <p className="text-gray-600 mb-6">
-          This demo shows how to use the Push API to send notifications to users.
-        </p>
-        <div className="space-y-4">
-          <div className="p-4 bg-gray-50 rounded-lg">
-            <h2 className="font-semibold text-lg text-gray-700 mb-2">Status</h2>
-            {renderStatus()}
-          </div>
-          {notificationPermission !== 'granted' && (
-            <button
-              onClick={handleRequestPermission}
-              disabled={notificationPermission === 'denied'}
-              className="w-full bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-150 ease-in-out"
-            >
-              {notificationPermission === 'denied' ? 'Permission Denied' : 'Enable Notifications'}
-            </button>
-          )}
-          {isSubscribed && (
-            <button
-              onClick={handleTestNotification}
-              className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
-            >
-              Send a Test Notification
-            </button>
-          )}
-        </div>
-        {subscription && (
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600 overflow-x-auto">
-            <h3 className="font-semibold text-sm text-gray-700 mb-2">Subscription Details (for debugging)</h3>
-            <pre><code>{JSON.stringify(subscription, null, 2)}</code></pre>
-          </div>
+        
+        {keyMismatchError ? (
+             <div className="p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded-lg">
+                <h2 className="font-bold text-lg mb-2">Configuration Mismatch!</h2>
+                <p>The application's frontend and backend are using different VAPID keys.</p>
+                <p className="mt-2">Please ask the site administrator to redeploy the application and then clear your site data before trying again.</p>
+             </div>
+        ) : (
+        <>
+            <p className="text-gray-600 mb-6">
+            This demo shows how to use the Push API to send notifications to users.
+            </p>
+            <div className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-lg">
+                <h2 className="font-semibold text-lg text-gray-700 mb-2">Status</h2>
+                {renderStatus()}
+            </div>
+            {!isSubscribed && notificationPermission !== 'granted' && (
+                <button
+                onClick={handleRequestPermission}
+                disabled={notificationPermission === 'denied'}
+                className="w-full bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-150 ease-in-out"
+                >
+                {notificationPermission === 'denied' ? 'Permission Denied' : 'Enable Notifications'}
+                </button>
+            )}
+            {isSubscribed && (
+                <>
+                <button
+                    onClick={handleTestNotification}
+                    className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                >
+                    Send a Test Notification
+                </button>
+                <button
+                    onClick={handleReset}
+                    className="w-full bg-yellow-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                >
+                    Reset Subscription
+                </button>
+                </>
+            )}
+            </div>
+            {subscription && (
+            <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600 overflow-x-auto">
+                <h3 className="font-semibold text-sm text-gray-700 mb-2">Subscription Details (for debugging)</h3>
+                <pre><code>{JSON.stringify(subscription, null, 2)}</code></pre>
+            </div>
+            )}
+        </>
         )}
       </div>
     </div>

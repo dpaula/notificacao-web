@@ -66,6 +66,11 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({ ok: true });
 });
 
+// [NEW] Endpoint to expose the public VAPID key for frontend verification
+app.get('/api/vapid-key', (req, res) => {
+  res.status(200).json({ publicKey: vapidKeys.publicKey });
+});
+
 // Middleware for API Token Authentication
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -82,7 +87,7 @@ const authenticateToken = (req, res, next) => {
   next();
 };
 
-// [NEW] Register a subscription from the frontend
+// Register a subscription from the frontend
 app.post('/api/push/register', (req, res) => {
     const subscription = req.body;
     if (!subscription || !subscription.endpoint) {
@@ -93,7 +98,7 @@ app.post('/api/push/register', (req, res) => {
     res.status(201).json({ ok: true });
 });
 
-// [NEW] Get the last registered subscription
+// Get the last registered subscription
 app.get('/api/push/last-subscription', (req, res) => {
     if (lastSubscription) {
         res.status(200).json(lastSubscription);
@@ -102,14 +107,14 @@ app.get('/api/push/last-subscription', (req, res) => {
     }
 });
 
-// [NEW] Delete the last registered subscription
+// Delete the last registered subscription
 app.delete('/api/push/last-subscription', (req, res) => {
     console.log('[Server] Last subscription has been cleared.');
     lastSubscription = null;
     res.status(200).json({ ok: true });
 });
 
-// [NEW] Simple push endpoint
+// Simple push endpoint
 app.post('/api/push/simple', authenticateToken, async (req, res) => {
     if (!lastSubscription) {
         return res.status(400).json({ ok: false, reason: 'No subscription is registered on the server.' });
@@ -126,7 +131,7 @@ app.post('/api/push/simple', authenticateToken, async (req, res) => {
         const pushResult = await webpush.sendNotification(lastSubscription, notificationPayload);
         res.status(200).json({ ok: true, status: pushResult.statusCode });
     } catch (err) {
-        console.error('Error sending simple push notification:', err.body);
+        console.error('Error sending simple push notification:', err.body || err.message);
         if (err.statusCode === 410 || err.statusCode === 404) {
             lastSubscription = null; // Clean up expired subscription
             return res.status(410).json({ ok: false, status: err.statusCode, reason: 'Subscription is invalid or expired. It has been removed.' });
@@ -136,7 +141,7 @@ app.post('/api/push/simple', authenticateToken, async (req, res) => {
 });
 
 
-// [EXISTING] Detailed push endpoint
+// Detailed push endpoint
 app.post('/api/push/send', authenticateToken, async (req, res) => {
   const { subscription, notification } = req.body;
 
@@ -159,7 +164,7 @@ app.post('/api/push/send', authenticateToken, async (req, res) => {
     const pushResult = await webpush.sendNotification(subscription, payload, options);
     res.status(200).json({ ok: true, status: pushResult.statusCode });
   } catch (err) {
-    console.error('Error sending push notification:', err.body);
+    console.error('Error sending push notification:', err.body || err.message);
     if (err.statusCode === 410 || err.statusCode === 404) {
       return res.status(410).json({ ok: false, status: err.statusCode, reason: 'Subscription gone or invalid' });
     }
