@@ -1,0 +1,5 @@
+{
+  "name": "Notification Permission Requester",
+  "description": "A simple and elegant web application to request user permission for browser push notifications. Ideal for mobile web experiences.",
+  "requestFramePermissions": []
+}
