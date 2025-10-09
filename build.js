@@ -30,6 +30,9 @@ async function build() {
   
   await fs.writeFile(path.join(distDir, 'index.html'), html);
 
+  // Copy the service worker file to the dist directory
+  await fs.copyFile('sw.js', path.join(distDir, 'sw.js'));
+
   console.log('Build finished successfully and output to /dist');
 }
 

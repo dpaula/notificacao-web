@@ -1,48 +1,131 @@
 import React, { useState, useEffect } from 'react';
-import { BellIcon } from './components/BellIcon';
+import { NotificationIcon } from './components/NotificationIcon';
 import { CheckCircleIcon } from './components/CheckCircleIcon';
 import { XCircleIcon } from './components/XCircleIcon';
+import { InfoIcon } from './components/InfoIcon';
+
+// Replace with your actual VAPID public key
+const VAPID_PUBLIC_KEY = 'BOM3zO3g-52yphLfUgFwSLo-J0g_sBv2Vsc6nK35xms_1aK-5yF5d2-EHRO-m3sWcce-rJv3l_4QZ-VzY-I-1Sg';
+
+// Converts the VAPID public key string to a Uint8Array
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 const App: React.FC = () => {
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+  const [isCopied, setIsCopied] = useState<boolean>(false);
 
   useEffect(() => {
-    // Check if Notification API is available
-    if (!('Notification' in window)) {
-      console.error('This browser does not support desktop notification');
-      // You could set a state to show an "unsupported" message
+    // Check for browser support
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.error('This browser does not support push notifications.');
       return;
     }
-    // Set initial permission status
+
+    // Set initial permission state
     setPermission(Notification.permission);
+
+    // Load existing subscription from localStorage
+    const savedSubscription = localStorage.getItem('pushSubscription');
+    if (savedSubscription) {
+      setSubscription(JSON.parse(savedSubscription));
+    }
+
+    // Register the service worker
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => console.log('Service Worker registered successfully.', reg))
+      .catch(err => console.error('Service Worker registration failed:', err));
   }, []);
 
-  const requestPermission = async () => {
-    // Prevent multiple requests or requests when not applicable
-    if (isLoading || !('Notification' in window) || Notification.permission !== 'default') {
-      return;
-    }
-
+  const handleSubscribe = async () => {
+    if (isLoading) return;
     setIsLoading(true);
+
     try {
-      const result = await Notification.requestPermission();
-      setPermission(result);
+      // Request permission
+      const currentPermission = await Notification.requestPermission();
+      setPermission(currentPermission);
+
+      if (currentPermission !== 'granted') {
+        console.log('Permission not granted.');
+        return;
+      }
+
+      // Subscribe to push notifications
+      const registration = await navigator.serviceWorker.ready;
+      const newSubscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      console.log('New subscription:', newSubscription);
+      setSubscription(newSubscription);
+      localStorage.setItem('pushSubscription', JSON.stringify(newSubscription));
     } catch (error) {
-      console.error('An error occurred while requesting notification permission.', error);
+      console.error('Failed to subscribe the user: ', error);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const handleCopy = () => {
+    if (!subscription) return;
+    const subString = JSON.stringify(subscription, null, 2);
+    navigator.clipboard.writeText(subString).then(() => {
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000); // Reset after 2 seconds
+    });
+  };
   
+  const renderSubscriptionDetails = () => (
+    <div className="text-center">
+      <CheckCircleIcon className="w-16 h-16 mx-auto text-green-400 mb-4" />
+      <h1 className="text-2xl font-bold text-white">Inscrição Ativada!</h1>
+      <p className="text-gray-400 mt-2 mb-6">
+        Use os dados abaixo para enviar notificações push para este dispositivo.
+      </p>
+      <textarea
+        readOnly
+        className="w-full h-48 p-3 bg-gray-900 text-gray-300 border border-gray-600 rounded-md resize-none font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        value={JSON.stringify(subscription, null, 2)}
+      />
+      <button
+        onClick={handleCopy}
+        className="w-full mt-4 px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75 transition-colors"
+      >
+        {isCopied ? 'Copiado para a área de transferência!' : 'Copiar Inscrição'}
+      </button>
+    </div>
+  );
+
   const renderContent = () => {
     switch (permission) {
       case 'granted':
+        // If permission is granted but there is no subscription yet, show the button
         return (
           <div className="text-center">
-            <CheckCircleIcon className="w-16 h-16 mx-auto text-green-400 mb-4" />
-            <h1 className="text-2xl font-bold text-white">Notificações Ativadas!</h1>
-            <p className="text-gray-400 mt-2">Você receberá nossas atualizações. Obrigado!</p>
+            <InfoIcon className="w-16 h-16 mx-auto text-blue-400 mb-4" />
+            <h1 className="text-2xl font-bold text-white">Quase lá!</h1>
+            <p className="text-gray-400 mt-2 mb-6">
+              A permissão foi concedida. Clique abaixo para finalizar a inscrição e receber notificações.
+            </p>
+            <button
+              onClick={handleSubscribe}
+              disabled={isLoading}
+              className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Inscrevendo...' : 'Ativar Inscrição'}
+            </button>
           </div>
         );
       case 'denied':
@@ -58,13 +141,13 @@ const App: React.FC = () => {
       default: // 'default'
         return (
           <div className="text-center">
-            <BellIcon className="w-16 h-16 mx-auto text-blue-400 mb-4" />
+            <NotificationIcon className="w-16 h-16 mx-auto text-blue-400 mb-4" />
             <h1 className="text-2xl font-bold text-white">Receba Notificações</h1>
             <p className="text-gray-400 mt-2 mb-6">
               Clique no botão abaixo para permitir o envio de notificações e ficar por dentro das novidades.
             </p>
             <button
-              onClick={requestPermission}
+              onClick={handleSubscribe}
               disabled={isLoading}
               className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed disabled:transform-none"
             >
@@ -78,7 +161,7 @@ const App: React.FC = () => {
   return (
     <main className="bg-gray-900 min-h-screen flex flex-col items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md bg-gray-800 rounded-2xl shadow-2xl p-8 border border-gray-700">
-        {renderContent()}
+        {subscription ? renderSubscriptionDetails() : renderContent()}
       </div>
        <footer className="text-center mt-8 text-gray-500 text-sm">
         <p>Criado com React & Tailwind CSS</p>
