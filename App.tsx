@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { BellIcon } from './components/BellIcon';
 import { CheckCircleIcon } from './components/CheckCircleIcon';
@@ -6,6 +5,7 @@ import { XCircleIcon } from './components/XCircleIcon';
 
 const App: React.FC = () => {
   const [permission, setPermission] = useState<NotificationPermission>('default');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   useEffect(() => {
     // Check if Notification API is available
@@ -19,15 +19,19 @@ const App: React.FC = () => {
   }, []);
 
   const requestPermission = async () => {
-    if (!('Notification' in window)) {
-      console.error('This browser does not support desktop notification');
+    // Prevent multiple requests or requests when not applicable
+    if (isLoading || !('Notification' in window) || Notification.permission !== 'default') {
       return;
     }
 
-    // The user has not been asked for permission yet.
-    if (Notification.permission === 'default') {
+    setIsLoading(true);
+    try {
       const result = await Notification.requestPermission();
       setPermission(result);
+    } catch (error) {
+      console.error('An error occurred while requesting notification permission.', error);
+    } finally {
+      setIsLoading(false);
     }
   };
   
@@ -61,9 +65,10 @@ const App: React.FC = () => {
             </p>
             <button
               onClick={requestPermission}
-              className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition-transform transform hover:scale-105"
+              disabled={isLoading}
+              className="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition-transform transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed disabled:transform-none"
             >
-              Ativar Notificações
+              {isLoading ? 'Aguardando sua resposta...' : 'Ativar Notificações'}
             </button>
           </div>
         );
