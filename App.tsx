@@ -27,7 +27,8 @@ const App: React.FC = () => {
   const [subscription, setSubscription] = useState<PushSubscriptionJSON | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  const VAPID_PUBLIC_KEY = (import.meta as any).env.VITE_VAPID_PUBLIC_KEY;
+  // FIX: Added optional chaining to prevent a crash in dev environments where import.meta.env is undefined.
+  const VAPID_PUBLIC_KEY = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY;
 
   const vapidKeyFingerprint = useMemo(() => {
     if (!VAPID_PUBLIC_KEY) return "Not Configured";
