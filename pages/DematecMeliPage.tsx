@@ -212,7 +212,7 @@ const DematecMeliPage: React.FC = () => {
         greeting: 'Gerencie Pedidos Meli',
         prompts: [
           {
-            icon: 'clipboard',
+            icon: 'search',
             label: 'Pedidos do dia',
             prompt: 'Busque todos pedidos de hoje',
           },
@@ -222,7 +222,7 @@ const DematecMeliPage: React.FC = () => {
             prompt: 'Liste todos os pedidos prontos para envio',
           },
           {
-            icon: 'clock',
+            icon: 'calendar',
             label: 'Últimos 3 dias',
             prompt: 'Traga apenas as prontas para envio dos últimos 3 dias, no máximo 40 resultados',
           },
