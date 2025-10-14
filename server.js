@@ -39,18 +39,38 @@ webpush.setVapidDetails(
 app.use(express.json());
 
 // CORS Configuration
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+const allowedOriginsRaw = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim().replace(/\/$/, '')) // Trim whitespace and remove trailing slashes
   .filter(Boolean);
+
+const allowedOrigins = new Set(allowedOriginsRaw);
 
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    
+    // Allow if origin is in the whitelist
+    if (allowedOrigins.has(origin)) {
       return callback(null, true);
     }
+
+    // NEW: Also allow 'www.' subdomains of whitelisted origins
+    try {
+      const originUrl = new URL(origin);
+      if (originUrl.hostname.startsWith('www.')) {
+        // Construct the base origin (without www.)
+        const baseOrigin = `${originUrl.protocol}//${originUrl.hostname.substring(4)}${originUrl.port ? `:${originUrl.port}` : ''}`;
+        if (allowedOrigins.has(baseOrigin)) {
+          return callback(null, true);
+        }
+      }
+    } catch (e) {
+      // If origin is not a valid URL, it will be rejected below
+    }
+
+    // If not allowed, reject the request
     return callback(new Error('Not allowed by CORS'));
   }
 }));
