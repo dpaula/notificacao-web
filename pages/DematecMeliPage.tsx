@@ -247,8 +247,8 @@ const DematecMeliPage: React.FC = () => {
 
   return (
     <div className="flex min-h-screen flex-col items-center bg-[#05060a] text-slate-100">
-      <header className="w-full border-b border-slate-900/60 bg-[#070a12]/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-5xl flex-col items-start gap-2 px-5 py-6 sm:items-center sm:text-center md:px-8">
+      <header className="w-full border-b border-slate-900/40 bg-[#070a12]/90 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-start gap-2 px-5 py-8 text-left sm:items-center sm:text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Central Dematec · Mercado Livre</h1>
           <p className="text-sm text-slate-400 sm:text-base">
             Interface dedicada para consultar e orquestrar pedidos Mercado Livre via Agent Builder.
@@ -257,19 +257,12 @@ const DematecMeliPage: React.FC = () => {
       </header>
 
       <main className="flex w-full flex-1 justify-center px-4 py-8 sm:px-6 md:px-8">
-        <div className="flex w-full max-w-5xl flex-col gap-6">
-          <Link
-            to="/"
-            className="self-start text-sm font-medium text-slate-400 transition hover:text-slate-200 sm:self-center"
-          >
-            ← Voltar para notificações
-          </Link>
-
-          <section className="relative overflow-hidden rounded-3xl border border-slate-900 bg-[#090d17]/80 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.5)] backdrop-blur">
+        <div className="flex w-full max-w-4xl flex-col">
+          <section className="relative overflow-hidden rounded-[32px] bg-[#090d17]/85 shadow-[0_30px_80px_-25px_rgba(15,23,42,0.65)] backdrop-blur">
             {!isWidgetReady && (
-              <div className="absolute inset-5 rounded-2xl border border-dashed border-slate-700/80 bg-slate-900/40 p-6 text-sm text-slate-300">
+              <div className="absolute inset-5 rounded-[28px] border border-dashed border-slate-700/60 bg-slate-900/50 p-6 text-sm text-slate-300">
                 <p className="font-medium text-slate-200">Carregando ChatKit…</p>
-                <p className="mt-2 text-slate-400">
+                <p className="mt-2 text-slate-500">
                   Estamos baixando o widget do CDN da OpenAI. Verifique sua conexão caso esta mensagem persista.
                 </p>
                 {scriptError && (
@@ -278,10 +271,10 @@ const DematecMeliPage: React.FC = () => {
               </div>
             )}
 
-            <div className="mx-auto h-[70vh] w-full max-w-[900px] px-3 pb-6 pt-6 sm:h-[72vh] sm:px-6 md:h-[75vh] lg:h-[78vh]">
+            <div className="mx-auto h-[72vh] w-full max-w-[920px] px-3 pb-6 pt-6 sm:h-[74vh] sm:px-6 md:h-[78vh] lg:h-[80vh]">
               {isWidgetReady && (
-                <div className="h-full w-full rounded-2xl border border-slate-800/80 bg-[#0b101d] shadow-inner shadow-black/40">
-                  <ChatKit control={chatkit.control} className="block h-full w-full rounded-2xl" />
+                <div className="h-full w-full rounded-[26px] bg-[#0b101d] shadow-inner shadow-black/50">
+                  <ChatKit control={chatkit.control} className="block h-full w-full rounded-[26px]" />
                 </div>
               )}
             </div>
