@@ -5,6 +5,8 @@ const express = require('express');
 const path = require('path');
 const webpush = require('web-push');
 const cors = require('cors');
+const crypto = require('crypto');
+const OpenAI = require('openai');
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -14,7 +16,9 @@ const requiredEnvVars = [
   'VITE_VAPID_PUBLIC_KEY',
   'VAPID_PRIVATE_KEY',
   'VAPID_SUBJECT',
-  'API_TOKEN'
+  'API_TOKEN',
+  'OPENAI_API_KEY',
+  'CHATKIT_WORKFLOW_ID'
 ];
 
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
@@ -23,6 +27,12 @@ if (missingEnvVars.length > 0) {
   console.error(`ERROR: Missing required environment variables: ${missingEnvVars.join(', ')}`);
   process.exit(1);
 }
+
+// --- OpenAI Client Configuration ---
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+const chatkitWorkflowId = process.env.CHATKIT_WORKFLOW_ID;
 
 // --- VAPID Configuration ---
 const vapidKeys = {
@@ -225,6 +235,50 @@ app.post('/api/push/send', authenticateToken, async (req, res) => {
 
 
 // --- Serve SPA ---
+app.post('/api/chatkit/session', async (req, res) => {
+  if (!chatkitWorkflowId) {
+    return res.status(500).json({ error: 'CHATKIT_WORKFLOW_ID is not configured on the server.' });
+  }
+
+  const requestedWorkflow = typeof req.body?.workflowId === 'string' && req.body.workflowId.trim()
+    ? req.body.workflowId.trim()
+    : chatkitWorkflowId;
+
+  const baseUser =
+    (typeof req.body?.user === 'string' && req.body.user.trim()) ||
+    req.ip ||
+    'dematec-user';
+  const sanitizedUser = baseUser.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
+  const userId = `${sanitizedUser || 'dematec-user'}-${crypto.randomUUID().slice(0, 8)}`.toLowerCase();
+
+  try {
+    const session = await openai.beta.chatkit.sessions.create({
+      user: userId,
+      workflow: { id: requestedWorkflow },
+      chatkit_configuration: {
+        file_upload: {
+          enabled: true,
+        },
+      },
+    });
+
+    return res.status(200).json({
+      client_secret: session.client_secret,
+      session_id: session.id,
+      expires_at: session.expires_at,
+    });
+  } catch (error) {
+    console.error('[ChatKit] Failed to create session', error);
+    const statusCode = typeof error?.status === 'number' ? error.status : 500;
+    const detail =
+      (error?.error && typeof error.error === 'object' && 'message' in error.error && error.error.message) ||
+      error?.message ||
+      'Failed to create ChatKit session.';
+    const safeStatus = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
+    return res.status(safeStatus).json({ error: detail });
+  }
+});
+
 // This should be the last route
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));

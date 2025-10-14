@@ -7,11 +7,16 @@ async function build() {
 
   // Read VAPID public key from environment variables
   const vapidPublicKey = process.env.VITE_VAPID_PUBLIC_KEY;
+  const chatkitWorkflowId = process.env.VITE_CHATKIT_WORKFLOW_ID || '';
 
   if (!vapidPublicKey) {
     console.error('\x1b[31m%s\x1b[0m', 'Error: VITE_VAPID_PUBLIC_KEY environment variable is not set.');
     console.error('Please provide the VAPID public key to build the application.');
     process.exit(1);
+  }
+
+  if (!chatkitWorkflowId) {
+    console.warn('\x1b[33m%s\x1b[0m', 'Warning: VITE_CHATKIT_WORKFLOW_ID is not set. The ChatKit page will display a placeholder workflow id.');
   }
 
   // Ensure the dist directory is clean
@@ -27,8 +32,9 @@ async function build() {
     outfile: path.join(distDir, 'index.js'),
     define: { 
       'process.env.NODE_ENV': '"production"',
-      // Inject the env variable into the frontend code to be accessed via import.meta.env
-      'import.meta.env.VITE_VAPID_PUBLIC_KEY': `"${vapidPublicKey}"`,
+      // Inject env variables into the frontend bundle via import.meta.env
+      'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(vapidPublicKey),
+      'import.meta.env.VITE_CHATKIT_WORKFLOW_ID': JSON.stringify(chatkitWorkflowId),
     },
     loader: { '.tsx': 'tsx' },
   }).catch(() => process.exit(1));
