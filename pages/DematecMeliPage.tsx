@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { ChatKit, useChatKit } from '@openai/chatkit-react';
 import type { ChatKitOptions } from '@openai/chatkit';
 
@@ -247,7 +246,7 @@ const DematecMeliPage: React.FC = () => {
 
   return (
     <div className="flex min-h-screen flex-col items-center bg-[#05060a] text-slate-100">
-      <header className="w-full border-b border-slate-900/40 bg-[#070a12]/90 backdrop-blur">
+      <header className="w-full border-b border-slate-900/40 bg-[#070a12]">
         <div className="mx-auto flex w-full max-w-4xl flex-col items-start gap-2 px-5 py-8 text-left sm:items-center sm:text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Central Dematec · Mercado Livre</h1>
           <p className="text-sm text-slate-400 sm:text-base">
@@ -258,9 +257,9 @@ const DematecMeliPage: React.FC = () => {
 
       <main className="flex w-full flex-1 justify-center px-4 py-8 sm:px-6 md:px-8">
         <div className="flex w-full max-w-4xl flex-col">
-          <section className="relative overflow-hidden rounded-[32px] bg-[#090d17]/85 shadow-[0_30px_80px_-25px_rgba(15,23,42,0.65)] backdrop-blur">
+          <section className="relative overflow-hidden rounded-[28px] bg-[#0b0d16] shadow-[0_18px_40px_-20px_rgba(15,23,42,0.9)]">
             {!isWidgetReady && (
-              <div className="absolute inset-5 rounded-[28px] border border-dashed border-slate-700/60 bg-slate-900/50 p-6 text-sm text-slate-300">
+              <div className="absolute inset-5 rounded-[24px] border border-dashed border-slate-800/50 bg-[#0d111f]/80 p-6 text-sm text-slate-300">
                 <p className="font-medium text-slate-200">Carregando ChatKit…</p>
                 <p className="mt-2 text-slate-500">
                   Estamos baixando o widget do CDN da OpenAI. Verifique sua conexão caso esta mensagem persista.
@@ -271,10 +270,10 @@ const DematecMeliPage: React.FC = () => {
               </div>
             )}
 
-            <div className="mx-auto h-[72vh] w-full max-w-[920px] px-3 pb-6 pt-6 sm:h-[74vh] sm:px-6 md:h-[78vh] lg:h-[80vh]">
+            <div className="mx-auto h-[72vh] w-full max-w-[920px] px-3 pb-6 pt-6 sm:h-[74vh] sm:px-5 md:h-[78vh] lg:h-[80vh]">
               {isWidgetReady && (
-                <div className="h-full w-full rounded-[26px] bg-[#0b101d] shadow-inner shadow-black/50">
-                  <ChatKit control={chatkit.control} className="block h-full w-full rounded-[26px]" />
+                <div className="h-full w-full rounded-[22px] bg-[#0d111f]">
+                  <ChatKit control={chatkit.control} className="block h-full w-full rounded-[22px]" />
                 </div>
               )}
             </div>
