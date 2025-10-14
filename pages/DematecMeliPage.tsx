@@ -212,29 +212,19 @@ const DematecMeliPage: React.FC = () => {
         greeting: 'Gerencie Pedidos Meli',
         prompts: [
           {
-            icon: 'circle-question',
-            label: 'O que é o ChatKit?',
-            prompt: 'What is ChatKit?',
-          },
-          {
-            icon: 'book-open',
+            icon: 'clipboard',
             label: 'Pedidos do dia',
-            prompt: 'Liste 10 pedidos de hoje e destaque atrasos ou pendências.',
-          },
-          {
-            icon: 'bolt',
-            label: 'Priorizar soluções',
-            prompt: 'Quais pedidos exigem ação imediata e por quê?',
+            prompt: 'Busque todos pedidos de hoje',
           },
           {
             icon: 'check-circle',
-            label: 'Status de logística',
-            prompt: 'Traga um resumo da logística dos pedidos Meli desta semana.',
+            label: 'Prontos para envio',
+            prompt: 'Liste todos os pedidos prontos para envio',
           },
           {
-            icon: 'analytics',
-            label: 'Insights',
-            prompt: 'Gere insights sobre performance de atendimento no Mercado Livre.',
+            icon: 'clock',
+            label: 'Últimos 3 dias',
+            prompt: 'Traga apenas as prontas para envio dos últimos 3 dias, no máximo 40 resultados',
           },
         ],
       },
