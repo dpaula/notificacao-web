@@ -23,34 +23,54 @@ const DematecMeliPage: React.FC = () => {
     const ensureScriptLoaded = () =>
       new Promise<void>((resolve, reject) => {
         if (window.customElements?.get('openai-chatkit')) {
+          console.info('[ChatKit] Web component already registered, skipping script injection');
           resolve();
           return;
         }
 
         const existing = document.querySelector<HTMLScriptElement>('script[data-chatkit-script="true"]');
-        if (existing) {
+        const attachListeners = (target: HTMLScriptElement) => {
           const handleLoaded = () => {
-            existing.removeEventListener('load', handleLoaded);
-            existing.removeEventListener('error', handleError);
+            console.info('[ChatKit] chatkit.js loaded successfully', { src: target.src });
+            target.removeEventListener('load', handleLoaded);
+            target.removeEventListener('error', handleError);
             resolve();
           };
           const handleError = (event: Event) => {
-            existing.removeEventListener('load', handleLoaded);
-            existing.removeEventListener('error', handleError);
-            reject(event instanceof Error ? event : new Error('Falha ao carregar chatkit.js'));
+            console.error('[ChatKit] chatkit.js failed to load', {
+              src: target.src,
+              type: event.type,
+              timestamp: new Date().toISOString(),
+            });
+            target.removeEventListener('load', handleLoaded);
+            target.removeEventListener('error', handleError);
+            reject(event instanceof Error ? event : new Error(`Falha ao carregar chatkit.js (${event.type})`));
           };
-          existing.addEventListener('load', handleLoaded);
-          existing.addEventListener('error', handleError);
+          target.addEventListener('load', handleLoaded);
+          target.addEventListener('error', handleError);
+        };
+
+        if (existing) {
+          console.info('[ChatKit] Reusing existing chatkit script tag', {
+            src: existing.src,
+            async: existing.async,
+            type: existing.type,
+          });
+          attachListeners(existing);
           return;
         }
+
+        console.info('[ChatKit] Injecting chatkit.js script', {
+          src: CHATKIT_SCRIPT_URL,
+          timestamp: new Date().toISOString(),
+        });
 
         const script = document.createElement('script');
         script.src = CHATKIT_SCRIPT_URL;
         script.type = 'module';
         script.async = true;
         script.dataset.chatkitScript = 'true';
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('Não foi possível baixar chatkit.js'));
+        attachListeners(script);
         document.head.appendChild(script);
       });
 
@@ -61,7 +81,7 @@ const DematecMeliPage: React.FC = () => {
         setIsWidgetReady(true);
       })
       .catch((error: unknown) => {
-        console.error('[ChatKit] script load error', error);
+        console.error('[ChatKit] script load error (ensureScriptLoaded)', error);
         if (!isMounted) return;
         const message =
           error instanceof Error ? error.message : 'Não foi possível carregar o componente ChatKit.';
@@ -90,7 +110,12 @@ const DematecMeliPage: React.FC = () => {
 
         if (!response.ok) {
           const detail = await response.text();
-          throw new Error(detail || 'Falha ao criar sessão no ChatKit.');
+          console.error('[ChatKit] /api/chatkit/session returned error', {
+            status: response.status,
+            statusText: response.statusText,
+            detail: detail.slice(0, 500),
+          });
+          throw new Error(detail || `Falha ao criar sessão no ChatKit. (status ${response.status})`);
         }
 
         const payload = (await response.json()) as { client_secret?: string };
@@ -101,7 +126,7 @@ const DematecMeliPage: React.FC = () => {
         setSessionError(null);
         return payload.client_secret;
       } catch (error) {
-        console.error('[ChatKit] session error', error);
+        console.error('[ChatKit] session error (getClientSecret)', error);
         const message =
           error instanceof Error ? error.message : 'Não foi possível iniciar a sessão do ChatKit.';
         setSessionError(message);

@@ -240,9 +240,10 @@ app.post('/api/chatkit/session', async (req, res) => {
     return res.status(500).json({ error: 'CHATKIT_WORKFLOW_ID is not configured on the server.' });
   }
 
-  const requestedWorkflow = typeof req.body?.workflowId === 'string' && req.body.workflowId.trim()
-    ? req.body.workflowId.trim()
-    : chatkitWorkflowId;
+  const requestedWorkflow =
+    typeof req.body?.workflowId === 'string' && req.body.workflowId.trim()
+      ? req.body.workflowId.trim()
+      : chatkitWorkflowId;
 
   const baseUser =
     (typeof req.body?.user === 'string' && req.body.user.trim()) ||
@@ -250,6 +251,17 @@ app.post('/api/chatkit/session', async (req, res) => {
     'dematec-user';
   const sanitizedUser = baseUser.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
   const userId = `${sanitizedUser || 'dematec-user'}-${crypto.randomUUID().slice(0, 8)}`.toLowerCase();
+
+  console.info('[ChatKit] Session request received', {
+    at: new Date().toISOString(),
+    requestedWorkflow,
+    fallbackWorkflow: chatkitWorkflowId,
+    hasBody: Boolean(req.body),
+    bodyKeys: req.body ? Object.keys(req.body) : [],
+    userId,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || 'unknown',
+  });
 
   try {
     const session = await openai.beta.chatkit.sessions.create({
@@ -262,19 +274,40 @@ app.post('/api/chatkit/session', async (req, res) => {
       },
     });
 
+    console.info('[ChatKit] Session created successfully', {
+      at: new Date().toISOString(),
+      sessionId: session.id,
+      workflow: requestedWorkflow,
+      expiresAt: session.expires_at,
+      maxRequestsPerMinute: session.max_requests_per_1_minute,
+    });
+
     return res.status(200).json({
       client_secret: session.client_secret,
       session_id: session.id,
       expires_at: session.expires_at,
     });
   } catch (error) {
-    console.error('[ChatKit] Failed to create session', error);
     const statusCode = typeof error?.status === 'number' ? error.status : 500;
     const detail =
-      (error?.error && typeof error.error === 'object' && 'message' in error.error && error.error.message) ||
+      (error?.error &&
+        typeof error.error === 'object' &&
+        'message' in error.error &&
+        error.error.message) ||
       error?.message ||
       'Failed to create ChatKit session.';
     const safeStatus = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
+    const errorPayload = {
+      at: new Date().toISOString(),
+      message: detail,
+      statusCode,
+      safeStatus,
+      name: error?.name,
+      type: typeof error,
+      responseBody: error?.response?.body,
+      responseHeaders: error?.response?.headers,
+    };
+    console.error('[ChatKit] Failed to create session', errorPayload);
     return res.status(safeStatus).json({ error: detail });
   }
 });
