@@ -56,8 +56,10 @@ This project is a complete solution for demonstrating, testing, and sending Web 
     VAPID_PRIVATE_KEY="<Your VAPID Private Key>"
     VAPID_SUBJECT="mailto:your-email@example.com"
     API_TOKEN="<Generate a strong, random string for your API token>"
-    # Add your production domain and local dev domain for CORS
-    ALLOWED_ORIGINS="https://notify.autevia.com.br,http://localhost:8080"
+    
+    # The production domain (notify.autevia.com.br) is now automatically allowed.
+    # You can add other origins for development here (e.g., localhost).
+    ALLOWED_ORIGINS="http://localhost:8080"
     ```
 
 5.  **Build the Frontend:**

@@ -62,6 +62,12 @@ allowedOriginsRaw.forEach(origin => {
   }
 });
 
+// Forcefully add the primary production domain to the CORS whitelist.
+// This provides a fallback if the environment variable is misconfigured.
+const productionHostname = 'notify.autevia.com.br';
+allowedHostnames.add(productionHostname);
+allowedHostnames.add(`www.${productionHostname}`);
+
 if (process.env.NODE_ENV === 'production' && allowedHostnames.size === 0) {
     console.error('[CORS] FATAL ERROR: ALLOWED_ORIGINS is not configured for the production environment. The application will not start.');
     process.exit(1);
