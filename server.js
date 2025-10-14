@@ -1,3 +1,4 @@
+
 // server.js
 require('dotenv').config();
 const express = require('express');
@@ -38,42 +39,62 @@ webpush.setVapidDetails(
 // --- Middleware ---
 app.use(express.json());
 
-// CORS Configuration
+// --- NEW, ROBUST CORS CONFIGURATION ---
 const allowedOriginsRaw = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
-  .map(origin => origin.trim().replace(/\/$/, '')) // Trim whitespace and remove trailing slashes
+  .map(origin => origin.trim().replace(/\/$/, ''))
   .filter(Boolean);
 
-const allowedOrigins = new Set(allowedOriginsRaw);
+// Create a set of allowed hostnames for efficient lookup
+const allowedHostnames = new Set();
+allowedOriginsRaw.forEach(origin => {
+  try {
+    const hostname = new URL(origin).hostname;
+    allowedHostnames.add(hostname);
+    // Also add the www/non-www variant to the set
+    if (hostname.startsWith('www.')) {
+      allowedHostnames.add(hostname.substring(4));
+    } else {
+      allowedHostnames.add(`www.${hostname}`);
+    }
+  } catch (e) {
+    console.warn(`[CORS] Invalid origin specified in ALLOWED_ORIGINS: "${origin}"`);
+  }
+});
+
+if (process.env.NODE_ENV === 'production' && allowedHostnames.size === 0) {
+    console.error('[CORS] FATAL ERROR: ALLOWED_ORIGINS is not configured for the production environment. The application will not start.');
+    process.exit(1);
+} else if (allowedHostnames.size > 0) {
+    console.log(`[CORS] Allowed hostnames: ${[...allowedHostnames].join(', ')}`);
+}
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Allow if origin is in the whitelist
-    if (allowedOrigins.has(origin)) {
+    // Allow requests with no origin (like curl, mobile apps, etc.)
+    if (!origin) {
       return callback(null, true);
     }
 
-    // NEW: Also allow 'www.' subdomains of whitelisted origins
+    let originHostname;
     try {
-      const originUrl = new URL(origin);
-      if (originUrl.hostname.startsWith('www.')) {
-        // Construct the base origin (without www.)
-        const baseOrigin = `${originUrl.protocol}//${originUrl.hostname.substring(4)}${originUrl.port ? `:${originUrl.port}` : ''}`;
-        if (allowedOrigins.has(baseOrigin)) {
-          return callback(null, true);
-        }
-      }
+      originHostname = new URL(origin).hostname;
     } catch (e) {
-      // If origin is not a valid URL, it will be rejected below
+      console.error(`[CORS] Rejected invalid origin format: "${origin}"`);
+      return callback(new Error('Origin format is invalid.'));
     }
 
-    // If not allowed, reject the request
+    // Check if the incoming request's hostname is in our allowed set
+    if (allowedHostnames.has(originHostname)) {
+      return callback(null, true);
+    }
+
+    // If we've reached here, the origin is not allowed.
+    console.error(`[CORS] Rejected origin: "${origin}". Hostname "${originHostname}" is not in the allowed list.`);
     return callback(new Error('Not allowed by CORS'));
   }
 }));
+
 
 // Serve static files from the 'dist' directory
 app.use(express.static(path.join(__dirname, 'dist')));
