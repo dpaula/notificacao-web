@@ -246,109 +246,46 @@ const DematecMeliPage: React.FC = () => {
   const chatkit = useChatKit(chatKitOptions);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#05060a] text-slate-100">
-      <header className="border-b border-slate-900/60 bg-[#070a12]/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-5 py-6 md:flex-row md:items-center md:justify-between lg:px-12">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white md:text-3xl">Central Dematec · Mercado Livre</h1>
-            <p className="text-sm text-slate-400 md:text-base">
-              Acompanhe pedidos, responda clientes e acione automações do Agent Builder em tempo real.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              to="/"
-              className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-indigo-400 hover:text-white"
-            >
-              ← Voltar para notificações
-            </Link>
-            <a
-              href="https://platform.openai.com/docs/guides/chatkit"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-600"
-            >
-              Documentação ChatKit
-            </a>
-          </div>
+    <div className="flex min-h-screen flex-col items-center bg-[#05060a] text-slate-100">
+      <header className="w-full border-b border-slate-900/60 bg-[#070a12]/80 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-5xl flex-col items-start gap-2 px-5 py-6 sm:items-center sm:text-center md:px-8">
+          <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Central Dematec · Mercado Livre</h1>
+          <p className="text-sm text-slate-400 sm:text-base">
+            Interface dedicada para consultar e orquestrar pedidos Mercado Livre via Agent Builder.
+          </p>
         </div>
       </header>
 
-      <main className="flex-1">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6 lg:flex-row lg:items-start lg:px-12 xl:gap-8">
-          <section className="w-full lg:flex-[0_0_60%] xl:flex-[0_0_65%]">
-            <div className="overflow-hidden rounded-3xl border border-slate-900 bg-[#090d17]/80 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.45)] backdrop-blur">
-              <div className="border-b border-slate-800/80 px-6 py-5">
-                <h2 className="text-lg font-semibold text-white md:text-xl">Assistente Dematec · Mercado Livre</h2>
-                <p className="text-xs text-slate-400 md:text-sm">
-                  Conectado ao workflow publicado no Agent Builder. Utilize prompts iniciais ou defina uma estratégia própria.
+      <main className="flex w-full flex-1 justify-center px-4 py-8 sm:px-6 md:px-8">
+        <div className="flex w-full max-w-5xl flex-col gap-6">
+          <Link
+            to="/"
+            className="self-start text-sm font-medium text-slate-400 transition hover:text-slate-200 sm:self-center"
+          >
+            ← Voltar para notificações
+          </Link>
+
+          <section className="relative overflow-hidden rounded-3xl border border-slate-900 bg-[#090d17]/80 shadow-[0_25px_50px_-12px_rgba(15,23,42,0.5)] backdrop-blur">
+            {!isWidgetReady && (
+              <div className="absolute inset-5 rounded-2xl border border-dashed border-slate-700/80 bg-slate-900/40 p-6 text-sm text-slate-300">
+                <p className="font-medium text-slate-200">Carregando ChatKit…</p>
+                <p className="mt-2 text-slate-400">
+                  Estamos baixando o widget do CDN da OpenAI. Verifique sua conexão caso esta mensagem persista.
                 </p>
-              </div>
-              <div className="relative px-3 pb-6 pt-5 sm:px-4 lg:px-5">
-                {!isWidgetReady && (
-                  <div className="absolute inset-4 rounded-2xl border border-dashed border-slate-700/80 bg-slate-900/40 p-6 text-sm text-slate-300">
-                    <p className="font-medium text-slate-200">Carregando ChatKit…</p>
-                    <p className="mt-2 text-slate-400">
-                      Estamos baixando o widget do CDN da OpenAI. Verifique sua conexão caso esta mensagem persista.
-                    </p>
-                    {scriptError && (
-                      <p className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-300">{scriptError}</p>
-                    )}
-                  </div>
-                )}
-                {isWidgetReady && (
-                  <div className="mx-auto h-[70vh] w-full max-w-[1040px] rounded-2xl border border-slate-800/80 bg-[#0b101d] shadow-inner shadow-black/40 sm:h-[68vh] md:h-[72vh] lg:h-[75vh]">
-                    <ChatKit control={chatkit.control} className="block h-full w-full rounded-2xl" />
-                  </div>
+                {scriptError && (
+                  <p className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-300">{scriptError}</p>
                 )}
               </div>
+            )}
+
+            <div className="mx-auto h-[70vh] w-full max-w-[900px] px-3 pb-6 pt-6 sm:h-[72vh] sm:px-6 md:h-[75vh] lg:h-[78vh]">
+              {isWidgetReady && (
+                <div className="h-full w-full rounded-2xl border border-slate-800/80 bg-[#0b101d] shadow-inner shadow-black/40">
+                  <ChatKit control={chatkit.control} className="block h-full w-full rounded-2xl" />
+                </div>
+              )}
             </div>
           </section>
-
-          <aside className="w-full lg:flex-[0_0_40%] xl:flex-[0_0_35%]">
-            <div className="grid gap-6 xl:gap-8">
-              <div className="rounded-3xl border border-slate-900 bg-[#090d17]/80 p-6 shadow-[0_20px_45px_-20px_rgba(15,23,42,0.7)] backdrop-blur">
-                <h3 className="text-lg font-semibold text-white md:text-xl">Como funciona este painel</h3>
-                <ul className="mt-4 space-y-3 text-sm text-slate-300 md:text-base">
-                  <li>
-                    <span className="font-medium text-slate-100">Workflow:</span> usa o ID publicado configurado nas variáveis{' '}
-                    <code className="rounded-md bg-slate-800 px-2 py-1 text-xs font-mono">CHATKIT_WORKFLOW_ID</code> e{' '}
-                    <code className="rounded-md bg-slate-800 px-2 py-1 text-xs font-mono">VITE_CHATKIT_WORKFLOW_ID</code> para iniciar sessões.
-                  </li>
-                  <li>
-                    <span className="font-medium text-slate-100">Autenticação:</span> o backend gera um{' '}
-                    <code className="rounded-md bg-slate-800 px-2 py-1 text-xs font-mono">client_secret</code> efêmero via OpenAI API a cada acesso.
-                  </li>
-                  <li>
-                    <span className="font-medium text-slate-100">Ferramentas:</span> `Search docs` procura tutoriais internos; `Sincronizar pedidos`
-                    dispara nossa integração Mercado Livre → Agent Builder.
-                  </li>
-                  <li>
-                    <span className="font-medium text-slate-100">Start screen:</span> prompts sugeridos aceleram briefing de pedidos, logística e insights de SLA.
-                  </li>
-                </ul>
-              </div>
-
-              <div className="rounded-3xl border border-slate-900 bg-[#090d17]/80 p-6 shadow-[0_20px_45px_-20px_rgba(15,23,42,0.7)] backdrop-blur">
-                <h3 className="text-lg font-semibold text-white md:text-xl">Erros e diagnósticos</h3>
-                <div className="mt-4 space-y-3 text-sm text-slate-300 md:text-base">
-                  <div>
-                    <span className="font-medium text-slate-100">Widget:</span>{' '}
-                    {scriptError ? <span className="text-red-300">{scriptError}</span> : <span className="text-emerald-300">carregado</span>}
-                  </div>
-                  <div>
-                    <span className="font-medium text-slate-100">Sessão:</span>{' '}
-                    {sessionError ? <span className="text-red-300">{sessionError}</span> : <span className="text-emerald-300">ativa</span>}
-                  </div>
-                </div>
-                <p className="mt-5 text-xs text-slate-500 md:text-sm">
-                  Para depurar, verifique o log do servidor (`/api/chatkit/session`) e confirme que as variáveis{' '}
-                  <code className="rounded-md bg-slate-800 px-2 py-1">OPENAI_API_KEY</code> e{' '}
-                  <code className="rounded-md bg-slate-800 px-2 py-1">CHATKIT_WORKFLOW_ID</code> estão configuradas.
-                </p>
-              </div>
-            </div>
-          </aside>
         </div>
       </main>
     </div>
