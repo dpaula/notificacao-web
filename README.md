@@ -56,7 +56,8 @@ This project is a complete solution for demonstrating, testing, and sending Web 
     VAPID_PRIVATE_KEY="<Your VAPID Private Key>"
     VAPID_SUBJECT="mailto:your-email@example.com"
     API_TOKEN="<Generate a strong, random string for your API token>"
-    ALLOWED_ORIGINS="http://localhost:8080" # Optional: For CORS
+    # Add your production domain and local dev domain for CORS
+    ALLOWED_ORIGINS="https://notify.autevia.com.br,http://localhost:8080"
     ```
 
 5.  **Build the Frontend:**
@@ -69,7 +70,7 @@ This project is a complete solution for demonstrating, testing, and sending Web 
     ```bash
     npm run start
     ```
-    The application will be available at `http://localhost:8080`.
+    The application will be available at `https://notify.autevia.com.br` in production, or `http://localhost:8080` for local development.
 
 ## API Endpoints
 
@@ -97,7 +98,7 @@ Sends a notification with just a title and body to the last device that subscrib
     ```
 -   **Example `curl`**:
     ```sh
-    curl -X POST http://localhost:8080/api/push/simple \
+    curl -X POST https://notify.autevia.com.br/api/push/simple \
       -H "Authorization: Bearer YOUR_API_TOKEN" \
       -H "Content-Type: application/json" \
       -d '{ "title": "Test Title", "body": "This is the message body." }'

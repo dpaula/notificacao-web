@@ -39,7 +39,11 @@ webpush.setVapidDetails(
 app.use(express.json());
 
 // CORS Configuration
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim().replace(/\/$/, '')) // Trim whitespace and remove trailing slashes
+  .filter(Boolean);
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
