@@ -40,6 +40,21 @@ type StatusOption = (typeof STATUS_OPTIONS)[number];
 const SORT_OPTIONS = ['date', 'draft', 'status'] as const;
 type SortOption = (typeof SORT_OPTIONS)[number];
 
+const CopyIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
 const extractTagValue = (xml: string | undefined, tagName: string): string | null => {
   if (!xml) return null;
   const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
@@ -163,12 +178,14 @@ const FaturamentosPage: React.FC = () => {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [credentials, setCredentials] = useState({ username: '', password: '' });
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const hasFetchedInitially = useRef(false);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loadedPages, setLoadedPages] = useState<number[]>([]);
   const [activeInterval, setActiveInterval] = useState<IntervalOption>('15m');
   const [activeStatus, setActiveStatus] = useState<StatusOption | ''>('');
+  const copyTimeoutRef = useRef<number | null>(null);
 
   const fetchData = useCallback(
     async (override?: {
@@ -374,6 +391,25 @@ const FaturamentosPage: React.FC = () => {
     }
   };
 
+  const handleCopy = async (content: string | null | undefined, key: string) => {
+    if (!content) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedKey(key);
+      if (copyTimeoutRef.current) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = window.setTimeout(() => {
+        setCopiedKey(null);
+        copyTimeoutRef.current = null;
+      }, 2000);
+    } catch (err) {
+      console.error('[FaturamentosPage] Falha ao copiar XML', err);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     if (!draftFilter.trim()) return;
@@ -394,6 +430,15 @@ const FaturamentosPage: React.FC = () => {
       fetchData({ page: nextPage, reset: false });
     }
   }, [draftFilter, filteredItems.length, isLoading, loadedPages, totalPages, fetchData, isAuthenticated]);
+
+  useEffect(
+    () => () => {
+      if (copyTimeoutRef.current) {
+        window.clearTimeout(copyTimeoutRef.current);
+      }
+    },
+    []
+  );
 
   if (!isAuthenticated) {
     return (
@@ -578,8 +623,8 @@ const FaturamentosPage: React.FC = () => {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-10 md:px-6">
-        <section className="grid gap-4 md:grid-cols-3 lg:grid-cols-4">
+      <main className="mx-auto w-full max-w-6xl px-3 pb-16 pt-8 sm:px-4 md:px-6">
+        <section className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           <div className="rounded-2xl border border-slate-800 bg-slate-900/55 p-5 shadow-lg shadow-black/20 backdrop-blur">
             <p className="text-xs uppercase tracking-widest text-slate-400">Processos</p>
             <p className="mt-2 text-3xl font-semibold text-white">{summary.totalProcessos}</p>
@@ -674,53 +719,79 @@ const FaturamentosPage: React.FC = () => {
                       <span className="text-xs text-slate-500">
                         Atualizado {formatDateTime(item.alteradoEm)} · Criado {formatDateTime(item.criadoEm)}
                       </span>
-                    </div>
-                  </div>
-
-                  <dl className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
-                      <dt className="text-xs uppercase tracking-widest text-slate-400">Tipo</dt>
-                      <dd className="mt-1 text-lg font-medium text-slate-100">{item.tipo}</dd>
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
-                      <dt className="text-xs uppercase tracking-widest text-slate-400">Data emissão</dt>
-                      <dd className="mt-1 text-lg font-medium text-slate-100">{composedData}</dd>
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
-                      <dt className="text-xs uppercase tracking-widest text-slate-400">Tentativas</dt>
-                      <dd className="mt-1 text-lg font-medium text-slate-100">{item.nrTentativas ?? 0}</dd>
-                    </div>
-                  </dl>
-
-                  <details className="group mt-6">
-                    <summary className="flex cursor-pointer list-none items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/55 px-4 py-3 text-sm text-slate-300 transition hover:border-indigo-400 hover:text-white">
-                      <span>Ver XML bruto</span>
-                      <span className="text-xs uppercase tracking-widest text-indigo-300 transition group-open:rotate-180">
-                        Expandir
-                      </span>
-                    </summary>
-                    <div className="mt-3 grid gap-4 md:grid-cols-2">
-                      <div className="rounded-2xl border border-slate-800 bg-black/60 p-4">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                          Payload enviado
-                        </p>
-                        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-200">
-                          {item.xml}
-                        </pre>
                       </div>
-                      {item.xmlRetorno && (
-                        <div className="rounded-2xl border border-slate-800 bg-black/60 p-4">
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                            Retorno prefeitura
-                          </p>
-                          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs text-emerald-200">
-                            {item.xmlRetorno}
-                          </pre>
-                        </div>
-                      )}
                     </div>
-                  </details>
-                </article>
+
+                    <dl className="mt-6 grid gap-5 sm:grid-cols-2">
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+                        <dt className="text-xs uppercase tracking-widest text-slate-400">Tipo</dt>
+                        <dd className="mt-1 text-lg font-medium text-slate-100">{item.tipo}</dd>
+                      </div>
+                      <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+                        <dt className="text-xs uppercase tracking-widest text-slate-400">Data emissão</dt>
+                        <dd className="mt-1 text-lg font-medium text-slate-100">{composedData}</dd>
+                      </div>
+                    </dl>
+
+                    <details className="group mt-6">
+                      <summary className="flex cursor-pointer list-none items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/55 px-4 py-3 text-sm text-slate-300 transition hover:border-indigo-400 hover:text-white">
+                        <span>Schema (XML)</span>
+                        <span className="text-xs uppercase tracking-widest text-indigo-300 transition group-open:rotate-180">
+                          Expandir
+                        </span>
+                      </summary>
+                      <div className="mt-4 space-y-4 md:grid md:grid-cols-2 md:gap-4 md:space-y-0">
+                        <div className="rounded-2xl border border-slate-800 bg-black/60 p-4 shadow-inner shadow-black/20">
+                          <div className="mb-3 flex items-center justify-between">
+                            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                              Payload enviado
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(item.xml, `${item.id}-payload`)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/70 text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                              aria-label="Copiar payload enviado"
+                            >
+                              <CopyIcon className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-slate-200">
+                            {item.xml}
+                          </pre>
+                          {copiedKey === `${item.id}-payload` && (
+                            <span className="mt-2 inline-flex text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
+                              Copiado
+                            </span>
+                          )}
+                        </div>
+                        {item.xmlRetorno && (
+                          <div className="rounded-2xl border border-slate-800 bg-black/60 p-4 shadow-inner shadow-black/20">
+                            <div className="mb-3 flex items-center justify-between">
+                              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
+                                Retorno prefeitura
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(item.xmlRetorno, `${item.id}-retorno`)}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/70 text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                                aria-label="Copiar retorno prefeitura"
+                              >
+                                <CopyIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                            <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-emerald-200">
+                              {item.xmlRetorno}
+                            </pre>
+                            {copiedKey === `${item.id}-retorno` && (
+                              <span className="mt-2 inline-flex text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
+                                Copiado
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  </article>
               );
             })}
           </div>
