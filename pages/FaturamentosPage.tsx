@@ -165,6 +165,161 @@ const TEMP_USERS = [
   { username: 'admin.ti', password: 'admtIPorto@2026' },
 ] as const;
 
+type XmlTreeNode = {
+  name: string;
+  value?: string;
+  attributes: Record<string, string>;
+  children: XmlTreeNode[];
+};
+
+const parseXmlToTree = (xml: string): XmlTreeNode | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length > 0) {
+      return null;
+    }
+    const root = doc.documentElement;
+    const transform = (el: Element): XmlTreeNode => {
+      const attributes = Array.from(el.attributes).reduce<Record<string, string>>((acc, attr) => {
+        acc[attr.name] = attr.value;
+        return acc;
+      }, {});
+
+      const elementChildren = Array.from(el.children) as Element[];
+      const textNodes = Array.from(el.childNodes).filter(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || '').trim().length > 0
+      );
+      const value =
+        elementChildren.length === 0
+          ? textNodes
+              .map((node) => (node.textContent || '').trim())
+              .filter(Boolean)
+              .join(' ')
+              .replace(/\s+/g, ' ') || undefined
+          : undefined;
+
+      return {
+        name: el.tagName,
+        value,
+        attributes,
+        children: elementChildren.map(transform),
+      };
+    };
+
+    return transform(root);
+  } catch (error) {
+    console.error('[FaturamentosPage] Falha ao analisar XML', error);
+    return null;
+  }
+};
+
+const SchemaNodeRow: React.FC<{ node: XmlTreeNode; depth?: number }> = ({ node, depth = 0 }) => {
+  const indent = depth * 18;
+  const badgeVariant = node.children.length > 0 ? '<>' : 'ab';
+
+  return (
+    <div className="space-y-2" style={{ marginLeft: depth === 0 ? 0 : indent }}>
+      <div className="flex items-start gap-3">
+        <span className="rounded-md bg-slate-800/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-300">
+          {badgeVariant}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-400/90">{node.name}</p>
+          {node.value && (
+            <p className="mt-2 break-words rounded-lg bg-slate-950/70 px-3 py-2 text-sm leading-relaxed text-slate-200">
+              {node.value}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {Object.entries(node.attributes).map(([key, value]) => (
+        <div key={key} className="flex items-start gap-3" style={{ marginLeft: indent + 18 }}>
+          <span className="rounded-md bg-indigo-900/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-indigo-200/90">
+            @
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-indigo-200/80">{key}</p>
+            <p className="mt-1 break-words rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-indigo-100/90">{value}</p>
+          </div>
+        </div>
+      ))}
+
+      {node.children.map((child, idx) => (
+        <SchemaNodeRow key={`${node.name}-${idx}`} node={child} depth={depth + 1} />
+      ))}
+    </div>
+  );
+};
+
+const XmlSchemaView: React.FC<{
+  xml?: string | null;
+  title: string;
+  accent?: 'default' | 'emerald';
+  onCopy: () => void;
+  copied: boolean;
+}> = ({ xml, title, accent = 'default', onCopy, copied }) => {
+  const tree = useMemo(() => {
+    if (!xml || !xml.trim()) return null;
+    return parseXmlToTree(xml);
+  }, [xml]);
+
+  const accentClasses =
+    accent === 'emerald'
+      ? {
+          container: 'border-emerald-500/30 bg-emerald-500/5',
+          button: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400 hover:text-emerald-100',
+          badge: 'text-emerald-300',
+        }
+      : {
+          container: 'border-slate-800 bg-black/60',
+          button: 'border-slate-700/60 bg-slate-900/70 text-slate-300 hover:border-indigo-400 hover:text-indigo-200',
+          badge: 'text-indigo-300',
+        };
+
+  if (!xml || !xml.trim()) {
+    return (
+      <div className={`rounded-2xl border ${accentClasses.container} p-4 text-xs text-slate-500`}>
+        Nenhum dado disponível.
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-2xl border ${accentClasses.container} p-4 shadow-inner shadow-black/20`}>
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
+        <button
+          type="button"
+          onClick={onCopy}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-xs transition focus:outline-none focus:ring-2 focus:ring-indigo-400/40 ${accentClasses.button}`}
+          aria-label={`Copiar ${title}`}
+        >
+          <CopyIcon className="h-4 w-4" />
+        </button>
+      </div>
+
+      {tree ? (
+        <div className="max-h-72 overflow-auto rounded-xl border border-slate-800/60 bg-slate-950/70 px-4 py-4">
+          <SchemaNodeRow node={tree} />
+        </div>
+      ) : (
+        <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-slate-200">
+          {xml}
+        </pre>
+      )}
+
+      {copied && (
+        <span className={`mt-3 inline-flex text-[10px] font-semibold uppercase tracking-[0.35em] ${accentClasses.badge}`}>
+          Copiado
+        </span>
+      )}
+    </div>
+  );
+};
+
 const FaturamentosPage: React.FC = () => {
   const [items, setItems] = useState<FaturamentoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -457,7 +612,13 @@ const FaturamentosPage: React.FC = () => {
               </p>
             </div>
 
-            <form className="mt-8 space-y-5" onSubmit={handleAuthSubmit}>
+            <form
+              className="mt-8 space-y-5"
+              onSubmit={handleAuthSubmit}
+              method="post"
+              autoComplete="on"
+              name="porto-itapoa-auth"
+            >
               <div className="space-y-2">
                 <label htmlFor="username" className="text-xs uppercase tracking-[0.3em] text-slate-400">
                   Usuário
@@ -466,6 +627,7 @@ const FaturamentosPage: React.FC = () => {
                   id="username"
                   name="username"
                   autoComplete="username"
+                  required
                   value={credentials.username}
                   onChange={handleAuthFieldChange}
                   className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
@@ -481,6 +643,7 @@ const FaturamentosPage: React.FC = () => {
                   name="password"
                   type="password"
                   autoComplete="current-password"
+                  required
                   value={credentials.password}
                   onChange={handleAuthFieldChange}
                   className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
@@ -741,53 +904,20 @@ const FaturamentosPage: React.FC = () => {
                         </span>
                       </summary>
                       <div className="mt-4 space-y-4 md:grid md:grid-cols-2 md:gap-4 md:space-y-0">
-                        <div className="rounded-2xl border border-slate-800 bg-black/60 p-4 shadow-inner shadow-black/20">
-                          <div className="mb-3 flex items-center justify-between">
-                            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                              Payload enviado
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(item.xml, `${item.id}-payload`)}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/70 text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
-                              aria-label="Copiar payload enviado"
-                            >
-                              <CopyIcon className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-slate-200">
-                            {item.xml}
-                          </pre>
-                          {copiedKey === `${item.id}-payload` && (
-                            <span className="mt-2 inline-flex text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
-                              Copiado
-                            </span>
-                          )}
-                        </div>
+                        <XmlSchemaView
+                          xml={item.xml}
+                          title="Payload enviado"
+                          copied={copiedKey === `${item.id}-payload`}
+                          onCopy={() => handleCopy(item.xml, `${item.id}-payload`)}
+                        />
                         {item.xmlRetorno && (
-                          <div className="rounded-2xl border border-slate-800 bg-black/60 p-4 shadow-inner shadow-black/20">
-                            <div className="mb-3 flex items-center justify-between">
-                              <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                                Retorno prefeitura
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => handleCopy(item.xmlRetorno, `${item.id}-retorno`)}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/70 text-slate-300 transition hover:border-indigo-400 hover:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
-                                aria-label="Copiar retorno prefeitura"
-                              >
-                                <CopyIcon className="h-4 w-4" />
-                              </button>
-                            </div>
-                            <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-emerald-200">
-                              {item.xmlRetorno}
-                            </pre>
-                            {copiedKey === `${item.id}-retorno` && (
-                              <span className="mt-2 inline-flex text-[10px] font-semibold uppercase tracking-[0.3em] text-emerald-300">
-                                Copiado
-                              </span>
-                            )}
-                          </div>
+                          <XmlSchemaView
+                            xml={item.xmlRetorno}
+                            title="Retorno prefeitura"
+                            accent="emerald"
+                            copied={copiedKey === `${item.id}-retorno`}
+                            onCopy={() => handleCopy(item.xmlRetorno, `${item.id}-retorno`)}
+                          />
                         )}
                       </div>
                     </details>

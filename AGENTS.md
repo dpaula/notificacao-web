@@ -23,6 +23,7 @@
   - Configuração de CORS baseada em `ALLOWED_ORIGINS`, com fallback para `notify.autevia.com.br`, garantindo que apenas domínios aprovados acessem as APIs.  
   - Página dedicada `/faturamentos` consulta o webhook do n8n (`/webhook/fats`) para listar processos de NFSe, suportando filtros por intervalo (5m, 15m, 30m, 60m), status específicos, busca por draft (total ou últimos 4 dígitos com varredura automática das páginas seguintes) e ordenação dinâmica (data, draft ou status); o acesso é protegido por uma tela de login com credenciais temporárias e a página apresenta os XMLs de requisição e retorno.  
   - Visualização de cada processo inclui resumo em cards, exibição dos XMLs em layout tipo schema com botão de cópia rápida e badges de status com cores distintas.
+  - Tela de login otimizada para autocomplete/salvamento de credenciais no navegador.
 - **Integrações externas:**  
   - Serviço Web Push dos navegadores via biblioteca `web-push`, utilizando VAPID para autenticação junto aos push services (ex.: FCM).  
   - Service Worker `sw.js` responsável por exibir notificações, responder a cliques e disparar testes locais por mensagem do cliente.  
