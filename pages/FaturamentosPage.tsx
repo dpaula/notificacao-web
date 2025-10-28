@@ -6,7 +6,6 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Link } from 'react-router-dom';
 
 type FaturamentoItem = {
   id: string;
@@ -146,6 +145,11 @@ const statusBadgeClassName = (status: string): string => {
   }
 };
 
+const TEMP_USERS = [
+  { username: 'porto.ti', password: 'tIPorto@2026' },
+  { username: 'admin.ti', password: 'admtIPorto@2026' },
+] as const;
+
 const FaturamentosPage: React.FC = () => {
   const [items, setItems] = useState<FaturamentoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -155,6 +159,10 @@ const FaturamentosPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<StatusOption | ''>('');
   const [draftFilter, setDraftFilter] = useState<string>('');
   const [sortOption, setSortOption] = useState<SortOption>('date');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [credentials, setCredentials] = useState({ username: '', password: '' });
 
   const hasFetchedInitially = useRef(false);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -173,6 +181,10 @@ const FaturamentosPage: React.FC = () => {
       const reset = override?.reset ?? page === 0;
       const intervalValue = override?.interval ?? activeInterval;
       const statusValue = override?.status ?? activeStatus;
+
+      if (!isAuthenticated) {
+        return;
+      }
 
       if (reset) {
         setItems([]);
@@ -233,17 +245,22 @@ const FaturamentosPage: React.FC = () => {
         setIsLoading(false);
       }
     },
-    [activeInterval, activeStatus]
+    [activeInterval, activeStatus, isAuthenticated]
   );
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      hasFetchedInitially.current = false;
+      return;
+    }
+
     if (hasFetchedInitially.current) {
       return;
     }
 
     hasFetchedInitially.current = true;
     fetchData({ interval: '15m', status: '', reset: true, page: 0 });
-  }, [fetchData]);
+  }, [fetchData, isAuthenticated]);
 
   const filteredItems = useMemo(() => {
     const query = draftFilter.trim();
@@ -331,7 +348,34 @@ const FaturamentosPage: React.FC = () => {
     setSortOption(event.target.value as SortOption);
   };
 
+  const handleAuthFieldChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = event.target;
+    setCredentials((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (authLoading) return;
+
+    setAuthError(null);
+    setAuthLoading(true);
+
+    const isValid = TEMP_USERS.some(
+      (user) => user.username === credentials.username && user.password === credentials.password
+    );
+
+    if (isValid) {
+      setIsAuthenticated(true);
+      setAuthLoading(false);
+      setCredentials({ username: '', password: '' });
+    } else {
+      setAuthError('Credenciais inválidas. Tente novamente.');
+      setAuthLoading(false);
+    }
+  };
+
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (!draftFilter.trim()) return;
     if (filteredItems.length > 0) return;
     if (isLoading) return;
@@ -349,28 +393,97 @@ const FaturamentosPage: React.FC = () => {
     if (nextPage !== null) {
       fetchData({ page: nextPage, reset: false });
     }
-  }, [draftFilter, filteredItems.length, isLoading, loadedPages, totalPages, fetchData]);
+  }, [draftFilter, filteredItems.length, isLoading, loadedPages, totalPages, fetchData, isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-6 py-12">
+          <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/80 p-10 shadow-2xl shadow-black/30 backdrop-blur">
+            <div className="flex flex-col items-center gap-4">
+              <img
+                src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
+                alt="Porto Itapoá"
+                className="h-12 object-contain"
+              />
+              <h1 className="text-2xl font-semibold text-white">Monitor - NFSe Porto Itapoá</h1>
+              <p className="text-center text-sm text-slate-400">
+                Acesso restrito a usuários autorizados. Utilize as credenciais temporárias fornecidas.
+              </p>
+            </div>
+
+            <form className="mt-8 space-y-5" onSubmit={handleAuthSubmit}>
+              <div className="space-y-2">
+                <label htmlFor="username" className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                  Usuário
+                </label>
+                <input
+                  id="username"
+                  name="username"
+                  autoComplete="username"
+                  value={credentials.username}
+                  onChange={handleAuthFieldChange}
+                  className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  placeholder="Digite o usuário"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                  Senha
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={credentials.password}
+                  onChange={handleAuthFieldChange}
+                  className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  placeholder="Digite a senha"
+                />
+              </div>
+
+              {authError && (
+                <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+                  {authError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full rounded-full bg-indigo-500 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-600"
+              >
+                {authLoading ? 'Autenticando...' : 'Entrar'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800/80 bg-gradient-to-r from-slate-950 via-slate-900/95 to-slate-950 shadow-[0_12px_28px_rgba(8,15,40,0.6)] backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400/80">
-                Painel de Faturamentos
-              </p>
-              <h1 className="mt-2 text-3xl font-bold text-white">Monitor n8n - NFSe</h1>
-              <p className="mt-1 text-sm text-slate-400">
-                Consulta o webhook `fats` e apresenta os processos de faturamento recebidos via n8n.
-              </p>
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-6">
+              <img
+                src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
+                alt="Porto Itapoá"
+                className="h-10 w-auto object-contain md:h-12"
+              />
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400/80">
+                  Painel de Faturamentos
+                </p>
+                <h1 className="mt-2 text-3xl font-bold text-white">Monitor - NFSe Porto Itapoá</h1>
+                <p className="mt-1 text-sm text-slate-400">
+                  Consulta dos processos de faturamento recebidos do SAP e integrações Prefeitura.
+                </p>
+              </div>
             </div>
-            <Link
-              to="/"
-              className="inline-flex items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/60 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-indigo-400 hover:bg-slate-800/80 hover:text-white"
-            >
-              Página inicial
-            </Link>
           </div>
 
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
