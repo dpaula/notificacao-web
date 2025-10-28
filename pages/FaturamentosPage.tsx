@@ -699,7 +699,7 @@ const FaturamentosPage: React.FC = () => {
               <img
                 src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
                 alt="Porto Itapoá"
-                className="h-12 object-contain"
+                className="h-16 w-full max-w-[200px] object-contain"
               />
               <h1 className="text-2xl font-semibold text-white">Monitor - NFSe Porto Itapoá</h1>
               <p className="text-center text-sm text-slate-400">
@@ -787,7 +787,7 @@ const FaturamentosPage: React.FC = () => {
               <img
                 src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
                 alt="Porto Itapoá"
-                className="h-10 w-auto object-contain md:h-12"
+                className="h-14 w-full max-w-[180px] object-contain md:h-16"
               />
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-indigo-400/80">
