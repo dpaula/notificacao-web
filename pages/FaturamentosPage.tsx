@@ -38,6 +38,9 @@ const STATUS_OPTIONS = [
 
 type StatusOption = (typeof STATUS_OPTIONS)[number];
 
+const SORT_OPTIONS = ['date', 'draft', 'status'] as const;
+type SortOption = (typeof SORT_OPTIONS)[number];
+
 const extractTagValue = (xml: string | undefined, tagName: string): string | null => {
   if (!xml) return null;
   const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
@@ -56,25 +59,70 @@ const formatDateTime = (iso?: string, fallback?: string): string => {
   }).format(date);
 };
 
-const normalizePayload = (payload: unknown): FaturamentoItem[] => {
-  if (!payload) return [];
+type ParsedResponse = {
+  items: FaturamentoItem[];
+  pageNumber: number;
+  totalPages: number;
+};
+
+const parseApiResponse = (payload: unknown): ParsedResponse => {
+  const items: FaturamentoItem[] = [];
+  let pageNumber = 0;
+  let totalPages = 1;
+
+  const pushItem = (candidate: unknown) => {
+    if (candidate && typeof candidate === 'object' && 'id' in candidate) {
+      items.push(candidate as FaturamentoItem);
+    }
+  };
+
+  const parseEnvelope = (envelope: unknown) => {
+    if (!envelope || typeof envelope !== 'object') return;
+    const castEnvelope = envelope as {
+      content?: unknown[];
+      totalPages?: number;
+      number?: number;
+      pageable?: { pageNumber?: number };
+    };
+
+    if (Array.isArray(castEnvelope.content)) {
+      castEnvelope.content.forEach(pushItem);
+    }
+
+    if (typeof castEnvelope.totalPages === 'number') {
+      totalPages = Math.max(1, castEnvelope.totalPages);
+    }
+
+    if (typeof castEnvelope.number === 'number') {
+      pageNumber = castEnvelope.number;
+    } else if (
+      castEnvelope.pageable &&
+      typeof castEnvelope.pageable === 'object' &&
+      typeof castEnvelope.pageable.pageNumber === 'number'
+    ) {
+      pageNumber = castEnvelope.pageable.pageNumber;
+    }
+  };
+
   if (Array.isArray(payload)) {
-    return payload.flatMap((entry) =>
-      entry && typeof entry === 'object' && Array.isArray((entry as { content?: unknown[] }).content)
-        ? ((entry as { content: unknown[] }).content.filter(
-            (item): item is FaturamentoItem => item !== null && typeof item === 'object'
-          ) as FaturamentoItem[])
-        : []
+    const hasEnvelope = payload.some(
+      (entry) => entry && typeof entry === 'object' && Array.isArray((entry as { content?: unknown[] }).content)
     );
+
+    if (hasEnvelope) {
+      payload.forEach(parseEnvelope);
+    } else {
+      payload.forEach(pushItem);
+    }
+  } else {
+    parseEnvelope(payload);
   }
 
-  if (typeof payload === 'object' && Array.isArray((payload as { content?: unknown[] }).content)) {
-    return (payload as { content: unknown[] }).content.filter(
-      (item): item is FaturamentoItem => item !== null && typeof item === 'object'
-    ) as FaturamentoItem[];
-  }
-
-  return [];
+  return {
+    items,
+    pageNumber,
+    totalPages: Math.max(1, totalPages),
+  };
 };
 
 const statusBadgeClassName = (status: string): string => {
@@ -106,13 +154,31 @@ const FaturamentosPage: React.FC = () => {
   const [intervalFilter, setIntervalFilter] = useState<IntervalOption>('15m');
   const [statusFilter, setStatusFilter] = useState<StatusOption | ''>('');
   const [draftFilter, setDraftFilter] = useState<string>('');
+  const [sortOption, setSortOption] = useState<SortOption>('date');
 
   const hasFetchedInitially = useRef(false);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [loadedPages, setLoadedPages] = useState<number[]>([]);
+  const [activeInterval, setActiveInterval] = useState<IntervalOption>('15m');
+  const [activeStatus, setActiveStatus] = useState<StatusOption | ''>('');
 
   const fetchData = useCallback(
-    async (override?: { interval?: IntervalOption; status?: StatusOption | '' }) => {
-      const intervalValue = override?.interval ?? intervalFilter;
-      const statusValue = override?.status ?? statusFilter;
+    async (override?: {
+      interval?: IntervalOption;
+      status?: StatusOption | '';
+      page?: number;
+      reset?: boolean;
+    }) => {
+      const page = override?.page ?? 0;
+      const reset = override?.reset ?? page === 0;
+      const intervalValue = override?.interval ?? activeInterval;
+      const statusValue = override?.status ?? activeStatus;
+
+      if (reset) {
+        setItems([]);
+        setLoadedPages([]);
+        setTotalPages(1);
+      }
 
       setIsLoading(true);
       setError(null);
@@ -120,6 +186,7 @@ const FaturamentosPage: React.FC = () => {
       try {
         const url = new URL(WEBHOOK_URL);
         url.searchParams.set('interval', intervalValue);
+        url.searchParams.set('page', String(page));
         if (statusValue) {
           url.searchParams.set('status', statusValue);
         }
@@ -135,9 +202,29 @@ const FaturamentosPage: React.FC = () => {
         }
 
         const data = await response.json();
-        const normalized = normalizePayload(data);
-        setItems(normalized);
-        setLastUpdated(new Date());
+        const parsed = parseApiResponse(data);
+
+        setItems((prev) => {
+          const base = reset ? [] : prev;
+          const map = new Map(base.map((item) => [item.id, item]));
+          parsed.items.forEach((item) => map.set(item.id, item));
+          return Array.from(map.values());
+        });
+
+        setTotalPages(parsed.totalPages);
+        setLoadedPages((prev) => {
+          const base = reset ? [] : prev;
+          const next = new Set<number>(base);
+          next.add(typeof parsed.pageNumber === 'number' ? parsed.pageNumber : page);
+          next.add(page);
+          return Array.from(next).sort((a, b) => a - b);
+        });
+
+        if (reset || page === 0) {
+          setLastUpdated(new Date());
+          setActiveInterval(intervalValue);
+          setActiveStatus(statusValue);
+        }
       } catch (err) {
         console.error('[FaturamentosPage] Erro ao carregar dados', err);
         const message = err instanceof Error ? err.message : 'Não foi possível carregar os faturamentos.';
@@ -146,7 +233,7 @@ const FaturamentosPage: React.FC = () => {
         setIsLoading(false);
       }
     },
-    [intervalFilter, statusFilter]
+    [activeInterval, activeStatus]
   );
 
   useEffect(() => {
@@ -155,7 +242,7 @@ const FaturamentosPage: React.FC = () => {
     }
 
     hasFetchedInitially.current = true;
-    fetchData({ interval: '15m', status: '' });
+    fetchData({ interval: '15m', status: '', reset: true, page: 0 });
   }, [fetchData]);
 
   const filteredItems = useMemo(() => {
@@ -169,6 +256,23 @@ const FaturamentosPage: React.FC = () => {
       return draftString.includes(query);
     });
   }, [draftFilter, items]);
+
+  const sortedItems = useMemo(() => {
+    const clone = [...filteredItems];
+    switch (sortOption) {
+      case 'draft':
+        return clone.sort((a, b) => Number(a.draft) - Number(b.draft));
+      case 'status':
+        return clone.sort((a, b) => a.status.localeCompare(b.status));
+      case 'date':
+      default:
+        return clone.sort((a, b) => {
+          const dateA = new Date(a.alteradoEm ?? a.criadoEm ?? 0).getTime();
+          const dateB = new Date(b.alteradoEm ?? b.criadoEm ?? 0).getTime();
+          return dateB - dateA;
+        });
+    }
+  }, [filteredItems, sortOption]);
 
   const summary = useMemo(() => {
     if (!filteredItems.length) {
@@ -222,6 +326,30 @@ const FaturamentosPage: React.FC = () => {
   const handleDraftChange = (event: ChangeEvent<HTMLInputElement>) => {
     setDraftFilter(event.target.value.replace(/\D/g, ''));
   };
+
+  const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setSortOption(event.target.value as SortOption);
+  };
+
+  useEffect(() => {
+    if (!draftFilter.trim()) return;
+    if (filteredItems.length > 0) return;
+    if (isLoading) return;
+    if (loadedPages.length >= totalPages) return;
+
+    const nextPage = (() => {
+      for (let i = 0; i < totalPages; i += 1) {
+        if (!loadedPages.includes(i)) {
+          return i;
+        }
+      }
+      return null;
+    })();
+
+    if (nextPage !== null) {
+      fetchData({ page: nextPage, reset: false });
+    }
+  }, [draftFilter, filteredItems.length, isLoading, loadedPages, totalPages, fetchData]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -305,11 +433,29 @@ const FaturamentosPage: React.FC = () => {
                   </span>
                 </div>
               </label>
+
+              <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.2em] text-slate-400">
+                Ordenar por
+                <div className="relative">
+                  <select
+                    value={sortOption}
+                    onChange={handleSortChange}
+                    className="w-48 appearance-none rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 pr-10 text-sm font-medium text-slate-100 transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
+                  >
+                    <option value="date">Data (mais recentes)</option>
+                    <option value="draft">Draft (crescente)</option>
+                    <option value="status">Status (A-Z)</option>
+                  </select>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-500">
+                    ▾
+                  </span>
+                </div>
+              </label>
             </div>
 
             <button
               type="button"
-              onClick={() => fetchData()}
+              onClick={() => fetchData({ interval: intervalFilter, status: statusFilter, reset: true, page: 0 })}
               disabled={isLoading}
               className="inline-flex items-center justify-center rounded-full bg-indigo-500 px-6 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-600"
             >
@@ -371,7 +517,7 @@ const FaturamentosPage: React.FC = () => {
           )}
 
           <div className="mt-6 space-y-6">
-            {filteredItems.map((item) => {
+            {sortedItems.map((item) => {
               const cliente =
                 extractTagValue(item.xmlRetorno, 'nome_razao_social') ??
                 extractTagValue(item.xml, 'nome_razao_social');
