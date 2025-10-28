@@ -21,12 +21,14 @@
   - Rotas de envio (`/api/push/simple` e `/api/push/send`) exigem token Bearer válido e payloads com título/corpo; requisições inválidas retornam erros 4xx e, em caso de subscription expirada, o backend limpa o registro.  
   - Verificação cruzada de VAPID key entre frontend e backend (`/api/vapid-key`) bloqueia ações quando há divergência e orienta o reset da aplicação.  
   - Configuração de CORS baseada em `ALLOWED_ORIGINS`, com fallback para `notify.autevia.com.br`, garantindo que apenas domínios aprovados acessem as APIs.  
+  - Página dedicada `/faturamentos` consulta o webhook do n8n (`/webhook/fats`) para listar processos de NFSe, sumarizando valores e exibindo os XMLs de requisição e retorno.  
 - **Integrações externas:**  
   - Serviço Web Push dos navegadores via biblioteca `web-push`, utilizando VAPID para autenticação junto aos push services (ex.: FCM).  
   - Service Worker `sw.js` responsável por exibir notificações, responder a cliques e disparar testes locais por mensagem do cliente.  
   - Tailwind CSS via CDN para composição de UI sem build adicional.  
 - **Arquitetura identificada:**  
   - *Frontend:* React + TypeScript (arquivos `App.tsx`, `index.tsx`, ícones em `components/`), compilado por `esbuild` para `/dist`.  
+  - *Frontend (páginas):* `/` para orquestração de push, `/dematec-meli` para o chat embutido e `/faturamentos` para o monitor dark mode de faturamentos n8n.  
   - *Backend:* Express (`server.js`) que serve estáticos, valida variáveis de ambiente, gerencia CORS e oferece APIs de push autenticadas.  
   - *Service Worker:* `sw.js` tratador de push, clique e mensagens internas, habilitando testes offline e ações de foco da aba.
 

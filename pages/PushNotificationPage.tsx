@@ -222,12 +222,20 @@ const PushNotificationPage: React.FC = () => {
               Configure permissões e teste o envio de notificações web.
             </p>
           </div>
-          <Link
-            to="/dematec-meli"
-            className="inline-flex items-center justify-center rounded-full border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:border-indigo-400 hover:bg-indigo-50"
-          >
-            Abrir Chat Dematec · Meli
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              to="/faturamentos"
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-400 hover:bg-indigo-50"
+            >
+              Visualizar faturamentos
+            </Link>
+            <Link
+              to="/dematec-meli"
+              className="inline-flex items-center justify-center rounded-full border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:border-indigo-400 hover:bg-indigo-50"
+            >
+              Abrir Chat Dematec · Meli
+            </Link>
+          </div>
         </div>
       </header>
       <main className="flex-1 flex items-center justify-center px-4 py-8">
