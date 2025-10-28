@@ -165,6 +165,10 @@ const TEMP_USERS = [
   { username: 'admin.ti', password: 'admtIPorto@2026' },
 ] as const;
 
+const AUTH_STORAGE_KEY = 'porto_nfse_auth';
+const AUTH_PREF_KEY = 'porto_nfse_remember';
+const AUTH_EXPIRATION_MS = 1000 * 60 * 60 * 24 * 7; // 7 dias
+
 type XmlTreeNode = {
   name: string;
   value?: string;
@@ -216,40 +220,57 @@ const parseXmlToTree = (xml: string): XmlTreeNode | null => {
 };
 
 const SchemaNodeRow: React.FC<{ node: XmlTreeNode; depth?: number }> = ({ node, depth = 0 }) => {
-  const indent = depth * 18;
-  const badgeVariant = node.children.length > 0 ? '<>' : 'ab';
+  const hasChildren = node.children.length > 0;
+  const hasAttributes = Object.keys(node.attributes).length > 0;
+  const summaryValue = node.value && node.value.length > 80 ? `${node.value.slice(0, 77)}…` : node.value;
 
   return (
-    <div className="space-y-2" style={{ marginLeft: depth === 0 ? 0 : indent }}>
-      <div className="flex items-start gap-3">
-        <span className="rounded-md bg-slate-800/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-300">
-          {badgeVariant}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-400/90">{node.name}</p>
+    <div style={{ marginLeft: depth * 18 }} className="space-y-2">
+      <details
+        open={depth < 2}
+        className="group rounded-xl border border-slate-800/70 bg-slate-900/80 text-slate-200 shadow-inner shadow-black/20"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm transition hover:bg-slate-900/80">
+          <span className="flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-slate-800/90 text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-300">
+              {hasChildren ? '<>' : 'ab'}
+            </span>
+            <span className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-100">{node.name}</span>
+          </span>
+          {summaryValue && (
+            <span className="truncate text-[11px] text-slate-400">{summaryValue}</span>
+          )}
+        </summary>
+        <div className="space-y-3 border-t border-slate-800/60 px-4 py-3 text-sm">
           {node.value && (
-            <p className="mt-2 break-words rounded-lg bg-slate-950/70 px-3 py-2 text-sm leading-relaxed text-slate-200">
+            <pre className="whitespace-pre-wrap break-words rounded-lg bg-slate-950/75 px-3 py-2 text-sm text-slate-200">
               {node.value}
-            </p>
+            </pre>
+          )}
+
+          {hasAttributes && (
+            <div className="space-y-2">
+              {Object.entries(node.attributes).map(([key, value]) => (
+                <div
+                  key={key}
+                  className="rounded-lg border border-indigo-500/25 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-indigo-300">@ {key}</p>
+                  <p className="mt-1 break-words text-indigo-100/90">{value}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {hasChildren && (
+            <div className="space-y-2">
+              {node.children.map((child, idx) => (
+                <SchemaNodeRow key={`${node.name}-${idx}`} node={child} depth={depth + 1} />
+              ))}
+            </div>
           )}
         </div>
-      </div>
-
-      {Object.entries(node.attributes).map(([key, value]) => (
-        <div key={key} className="flex items-start gap-3" style={{ marginLeft: indent + 18 }}>
-          <span className="rounded-md bg-indigo-900/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-indigo-200/90">
-            @
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-indigo-200/80">{key}</p>
-            <p className="mt-1 break-words rounded-lg bg-slate-950/70 px-3 py-2 text-xs text-indigo-100/90">{value}</p>
-          </div>
-        </div>
-      ))}
-
-      {node.children.map((child, idx) => (
-        <SchemaNodeRow key={`${node.name}-${idx}`} node={child} depth={depth + 1} />
-      ))}
+      </details>
     </div>
   );
 };
@@ -302,11 +323,11 @@ const XmlSchemaView: React.FC<{
       </div>
 
       {tree ? (
-        <div className="max-h-72 overflow-auto rounded-xl border border-slate-800/60 bg-slate-950/70 px-4 py-4">
+        <div className="max-h-[28rem] overflow-auto rounded-xl border border-slate-800/60 bg-slate-950/70 px-4 py-4">
           <SchemaNodeRow node={tree} />
         </div>
       ) : (
-        <pre className="max-h-72 overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-slate-200">
+        <pre className="max-h-[28rem] overflow-auto rounded-xl bg-slate-950/70 p-4 text-xs font-mono text-slate-200">
           {xml}
         </pre>
       )}
@@ -332,8 +353,8 @@ const FaturamentosPage: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(false);
-  const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [rememberDevice, setRememberDevice] = useState<boolean>(true);
 
   const hasFetchedInitially = useRef(false);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -341,6 +362,45 @@ const FaturamentosPage: React.FC = () => {
   const [activeInterval, setActiveInterval] = useState<IntervalOption>('15m');
   const [activeStatus, setActiveStatus] = useState<StatusOption | ''>('');
   const copyTimeoutRef = useRef<number | null>(null);
+  const usernameRef = useRef<HTMLInputElement | null>(null);
+  const passwordRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      const storedPreference = window.localStorage.getItem(AUTH_PREF_KEY);
+      if (storedPreference !== null) {
+        setRememberDevice(storedPreference === 'true');
+      }
+
+      const persisted = window.localStorage.getItem(AUTH_STORAGE_KEY);
+      if (!persisted) {
+        return;
+      }
+
+      const parsed = JSON.parse(persisted) as { username?: string; expiresAt?: number };
+      if (!parsed?.username) {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        return;
+      }
+
+      if (parsed.expiresAt && parsed.expiresAt < Date.now()) {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        return;
+      }
+
+      if (TEMP_USERS.some((user) => user.username === parsed.username)) {
+        setIsAuthenticated(true);
+      } else {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    } catch (error) {
+      console.warn('[FaturamentosPage] Não foi possível restaurar sessão salva', error);
+    }
+  }, []);
 
   const fetchData = useCallback(
     async (override?: {
@@ -520,29 +580,54 @@ const FaturamentosPage: React.FC = () => {
     setSortOption(event.target.value as SortOption);
   };
 
-  const handleAuthFieldChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = event.target;
-    setCredentials((prev) => ({ ...prev, [name]: value }));
+  const handleRememberChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const next = event.target.checked;
+    setRememberDevice(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTH_PREF_KEY, next ? 'true' : 'false');
+      if (!next) {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    }
   };
 
   const handleAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (authLoading) return;
 
-    setAuthError(null);
+    const formData = new FormData(event.currentTarget);
+    const username = (formData.get('username') as string | null)?.trim() ?? '';
+    const password = (formData.get('password') as string | null) ?? '';
+
+    if (!username || !password) {
+      setAuthError('Informe usuário e senha.');
+      return;
+    }
+
     setAuthLoading(true);
 
-    const isValid = TEMP_USERS.some(
-      (user) => user.username === credentials.username && user.password === credentials.password
-    );
+    const isValid = TEMP_USERS.some((user) => user.username === username && user.password === password);
 
     if (isValid) {
+      setAuthError(null);
       setIsAuthenticated(true);
       setAuthLoading(false);
-      setCredentials({ username: '', password: '' });
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(AUTH_PREF_KEY, rememberDevice ? 'true' : 'false');
+        if (rememberDevice) {
+          window.localStorage.setItem(
+            AUTH_STORAGE_KEY,
+            JSON.stringify({ username, expiresAt: Date.now() + AUTH_EXPIRATION_MS })
+          );
+        } else {
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      }
     } else {
       setAuthError('Credenciais inválidas. Tente novamente.');
       setAuthLoading(false);
+      passwordRef.current?.focus();
+      passwordRef.current?.select();
     }
   };
 
@@ -595,6 +680,16 @@ const FaturamentosPage: React.FC = () => {
     []
   );
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      usernameRef.current?.focus({ preventScroll: true });
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [isAuthenticated]);
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -624,12 +719,12 @@ const FaturamentosPage: React.FC = () => {
                   Usuário
                 </label>
                 <input
+                  ref={usernameRef}
                   id="username"
                   name="username"
+                  type="text"
                   autoComplete="username"
                   required
-                  value={credentials.username}
-                  onChange={handleAuthFieldChange}
                   className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
                   placeholder="Digite o usuário"
                 />
@@ -639,16 +734,28 @@ const FaturamentosPage: React.FC = () => {
                   Senha
                 </label>
                 <input
+                  ref={passwordRef}
                   id="password"
                   name="password"
                   type="password"
                   autoComplete="current-password"
                   required
-                  value={credentials.password}
-                  onChange={handleAuthFieldChange}
                   className="w-full rounded-xl border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-sm text-white transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/40"
                   placeholder="Digite a senha"
                 />
+              </div>
+
+              <div className="flex items-center justify-between gap-3 text-xs text-slate-400">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-400"
+                    checked={rememberDevice}
+                    onChange={handleRememberChange}
+                  />
+                  <span>Manter conectado neste navegador</span>
+                </label>
+                <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Expira em 7 dias</span>
               </div>
 
               {authError && (
