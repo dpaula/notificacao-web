@@ -7,6 +7,7 @@ const webpush = require('web-push');
 const cors = require('cors');
 const crypto = require('crypto');
 const OpenAI = require('openai');
+const emissaoNfseTreinamentoRouter = require('./routes/emissao-nfse-treinamento');
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -114,6 +115,8 @@ app.use(cors({
 
 // Serve static files from the 'dist' directory
 app.use(express.static(path.join(__dirname, 'dist')));
+
+app.use('/api/emissao-nfse-treinamento', emissaoNfseTreinamentoRouter);
 
 
 // --- In-memory storage for the last subscription ---
