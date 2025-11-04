@@ -11,18 +11,18 @@ const XML_RESPONSE = `<?xml version="1.0" encoding="UTF-8"?>
         <codigo>00001 - Sucesso</codigo>
     </mensagem>
     <nfse>
-        <identificador>1000696422</identificador>
+        <identificador>1000798323</identificador>
         <nf>
-            <numero_nfse>18</numero_nfse>
+            <numero_nfse>1082825</numero_nfse>
             <serie_nfse>1</serie_nfse>
-            <data_nfse>24/10/2025</data_nfse>
-            <data_fato>24/10/2025</data_fato>
-            <hora_nfse>10:54:52</hora_nfse>
+            <data_nfse>29/10/2025</data_nfse>
+            <data_fato>29/10/2025</data_fato>
+            <hora_nfse>16:46:18</hora_nfse>
             <situacao_codigo_nfse>1</situacao_codigo_nfse>
             <situacao_descricao_nfse>Emitida</situacao_descricao_nfse>
-            <link_nfse>https://treinamento.atende.net/autoatendimento/servicos/consulta-de-autenticidade-de-nota-fiscal-eletronica-nfse/detalhar/1/identificador/9985241025105452090013172772025107395480</link_nfse>
-            <cod_verificador_autenticidade>9985241025105452090013172772025107395480</cod_verificador_autenticidade>
-            <valor_total>10.228,96</valor_total>
+            <link_nfse>https://itapoa.atende.net/autoatendimento/servicos/consulta-de-autenticidade-de-nota-fiscal-eletronica-nfse/detalhar/1/identificador/9985291025164618400013172772025108377347</link_nfse>
+            <cod_verificador_autenticidade>9985291025164618400013172772025108377347</cod_verificador_autenticidade>
+            <valor_total>116,00</valor_total>
             <valor_desconto>0,00</valor_desconto>
             <valor_ir>0,00</valor_ir>
             <valor_inss>0,00</valor_inss>
@@ -30,46 +30,46 @@ const XML_RESPONSE = `<?xml version="1.0" encoding="UTF-8"?>
             <valor_rps>0,00</valor_rps>
             <valor_pis>0,00</valor_pis>
             <valor_cofins>0,00</valor_cofins>
-            <observacao>Draft: 1000696422 | CMVERL6N1 - 5%</observacao>
+            <observacao>Draft: 1000798323 | 2523718358 | IMPO POR BL</observacao>
         </nf>
         <prestador>
             <cpfcnpj>01317277000105</cpfcnpj>
             <cidade>9985</cidade>
         </prestador>
         <tomador>
-            <tipo>E</tipo>
-            <cpfcnpj>0</cpfcnpj>
+            <tipo>J</tipo>
+            <cpfcnpj>09291672000178</cpfcnpj>
             <ie></ie>
             <sobrenome_nome_fantasia>0</sobrenome_nome_fantasia>
-            <nome_razao_social>MSC MEDITERRANEAN SHIPPING COMPANY</nome_razao_social>
-            <numero_residencia>1214</numero_residencia>
-            <complemento>0</complemento>
+            <nome_razao_social>PARTER TRADING IMPORTADORA E EXPORTADORA LTDA.</nome_razao_social>
+            <numero_residencia>134</numero_residencia>
+            <complemento>ANDAR 6 </complemento>
             <ponto_referencia>0</ponto_referencia>
-            <pais>Su??a</pais>
-            <siglaPais>CH</siglaPais>
-            <codigoIbgePais>7676</codigoIbgePais>
-            <estado>SL</estado>
-            <cidade>0</cidade>
-            <logradouro>Chemin Rieu 1214</logradouro>
-            <bairro>Gare de Cornavin</bairro>
-            <cep>99999999</cep>
+            <pais>Brasil</pais>
+            <siglaPais>BR</siglaPais>
+            <codigoIbgePais>1058</codigoIbgePais>
+            <estado>SC</estado>
+            <cidade>8179</cidade>
+            <logradouro>ACESSO alameda rodovia r evaristo da veiga</logradouro>
+            <bairro>GLORIA</bairro>
+            <cep>89216215</cep>
             <ddd_fone_residencial>0</ddd_fone_residencial>
             <ddd_fone_comercial>0</ddd_fone_comercial>
             <fone_residencial></fone_residencial>
             <fone_comercial>0</fone_comercial>
             <ddd_fax>0</ddd_fax>
             <fone_fax>0</fone_fax>
-            <email>tcorrea.ssz@mscbr.com.br</email>
+            <email>MARIA.OLIVEIRA@PARTER.COM.BR</email>
         </tomador>
         <itens>
             <lista>
                 <codigo_local_prestacao_servico>9985</codigo_local_prestacao_servico>
                 <codigo_atividade>523110200</codigo_atividade>
-                <codigo_item_lista_servico>2001</codigo_item_lista_servico>
+                <codigo_item_lista_servico>1104</codigo_item_lista_servico>
                 <descritivo>Servicos de porto discriminados abaixo</descritivo>
-                <aliquota_item_lista_servico>5,0000</aliquota_item_lista_servico>
+                <aliquota_item_lista_servico>3,0000</aliquota_item_lista_servico>
                 <situacao_tributaria>0</situacao_tributaria>
-                <valor_tributavel>10.228,96</valor_tributavel>
+                <valor_tributavel>116,00</valor_tributavel>
                 <valor_deducao>0,00</valor_deducao>
                 <valor_issrf>0,00</valor_issrf>
                 <tributa_municipio_prestador>S</tributa_municipio_prestador>
