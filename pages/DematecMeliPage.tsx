@@ -235,11 +235,12 @@ const DematecMeliPage: React.FC = () => {
   const chatkit = useChatKit(chatKitOptions);
 
   return (
-    <div className="flex min-h-screen flex-col items-center bg-[#05060a] text-slate-100">
-      <header className="w-full border-b border-slate-900/40 bg-[#070a12]">
-        <div className="mx-auto flex w-full max-w-4xl flex-col items-start gap-2 px-5 py-8 text-left sm:items-center sm:text-center">
+    <div className="app-shell flex min-h-screen flex-col items-center">
+      <header className="w-full pb-6 pt-8">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-start gap-2 px-5 text-left sm:items-center sm:text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Central</p>
           <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Central Dematec · Mercado Livre</h1>
-          <p className="text-sm text-slate-400 sm:text-base">
+          <p className="text-sm text-muted sm:text-base">
             Interface dedicada para consultar e orquestrar pedidos Mercado Livre via Agent Builder.
           </p>
         </div>
@@ -247,22 +248,24 @@ const DematecMeliPage: React.FC = () => {
 
       <main className="flex w-full flex-1 justify-center px-4 py-8 sm:px-6 md:px-8">
         <div className="flex w-full max-w-4xl flex-col">
-          <section className="relative overflow-hidden rounded-[28px] bg-[#0b0d16] shadow-[0_18px_40px_-20px_rgba(15,23,42,0.9)]">
+          <section className="surface relative overflow-hidden">
             {!isWidgetReady && (
-              <div className="absolute inset-5 rounded-[24px] border border-dashed border-slate-800/50 bg-[#0d111f]/80 p-6 text-sm text-slate-300">
-                <p className="font-medium text-slate-200">Carregando ChatKit…</p>
-                <p className="mt-2 text-slate-500">
+              <div className="absolute inset-5 card card-ring bg-[rgba(255,255,255,0.03)] p-6 text-sm text-muted">
+                <p className="font-medium text-white">Carregando ChatKit…</p>
+                <p className="mt-2 text-subtle">
                   Estamos baixando o widget do CDN da OpenAI. Verifique sua conexão caso esta mensagem persista.
                 </p>
                 {scriptError && (
-                  <p className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-300">{scriptError}</p>
+                  <p className="mt-4 rounded-md bg-[rgba(224,32,32,0.12)] px-3 py-2 text-xs text-brand-red">
+                    {scriptError}
+                  </p>
                 )}
               </div>
             )}
 
             <div className="mx-auto h-[72vh] w-full max-w-[920px] px-3 pb-6 pt-6 sm:h-[74vh] sm:px-5 md:h-[78vh] lg:h-[80vh]">
               {isWidgetReady && (
-                <div className="h-full w-full rounded-[22px] bg-[#0d111f]">
+                <div className="h-full w-full rounded-[22px] bg-[rgba(255,255,255,0.03)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]">
                   <ChatKit control={chatkit.control} className="block h-full w-full rounded-[22px]" />
                 </div>
               )}

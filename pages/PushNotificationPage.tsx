@@ -181,7 +181,7 @@ const PushNotificationPage: React.FC = () => {
   const renderStatus = () => {
     if (error) {
       return (
-        <div className="flex items-center text-red-500">
+        <div className="flex items-center text-brand-red">
           <XCircleIcon className="w-6 h-6 mr-2" />
           <span>{error}</span>
         </div>
@@ -190,21 +190,21 @@ const PushNotificationPage: React.FC = () => {
     switch (notificationPermission) {
       case 'granted':
         return (
-          <div className="flex items-center text-green-500">
+          <div className="flex items-center text-brand-lime">
             <CheckCircleIcon className="w-6 h-6 mr-2" />
             <span>Notifications are enabled.</span>
           </div>
         );
       case 'denied':
         return (
-          <div className="flex items-center text-red-500">
+          <div className="flex items-center text-brand-red">
             <XCircleIcon className="w-6 h-6 mr-2" />
             <span>Notifications are blocked. Please enable them in your browser settings.</span>
           </div>
         );
       default:
         return (
-          <div className="flex items-center text-gray-500">
+          <div className="flex items-center text-muted">
             <InfoIcon className="w-6 h-6 mr-2" />
             <span>Please enable notifications to receive updates.</span>
           </div>
@@ -213,59 +213,62 @@ const PushNotificationPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col font-sans">
-      <header className="bg-white shadow-sm">
-        <div className="max-w-4xl mx-auto flex flex-col gap-3 px-6 py-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">Notificações Push</h1>
-            <p className="text-sm text-gray-500">
-              Configure permissões e teste o envio de notificações web.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Link
-              to="/faturamentos"
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-400 hover:bg-indigo-50"
-            >
-              Visualizar faturamentos
-            </Link>
-            <Link
-              to="/dematec-meli"
-              className="inline-flex items-center justify-center rounded-full border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:border-indigo-400 hover:bg-indigo-50"
-            >
-              Abrir Chat Dematec · Meli
-            </Link>
+    <div className="app-shell flex min-h-screen flex-col">
+      <header className="pb-6 pt-8">
+        <div className="mx-auto w-full max-w-4xl px-4 sm:px-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Notificações</p>
+              <h1 className="mt-2 text-2xl font-semibold text-white">Notificações Push</h1>
+              <p className="mt-2 text-sm text-muted">
+                Configure permissões e teste o envio de notificações web.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Link to="/faturamentos" className="btn btn-ghost inline-flex items-center justify-center text-sm">
+                Visualizar faturamentos
+              </Link>
+              <Link to="/dematec-meli" className="btn btn-ghost inline-flex items-center justify-center text-sm">
+                Abrir Chat Dematec · Meli
+              </Link>
+            </div>
           </div>
         </div>
       </header>
-      <main className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
-          <div className="flex items-center mb-6">
-            <BellIcon className="w-10 h-10 text-indigo-500 mr-4" />
-            <h2 className="text-3xl font-bold text-gray-800">Push Notifications</h2>
-          </div>
+
+      <main className="flex-1 px-4 pb-16 sm:px-6">
+        <div className="mx-auto w-full max-w-md">
+          <div className="surface p-8">
+            <div className="mb-6 flex items-center gap-3">
+              <BellIcon className="h-10 w-10 text-brand-lime" />
+              <h2 className="text-2xl font-semibold text-white">Push Notifications</h2>
+            </div>
           
           {keyMismatchError ? (
-              <div className="p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded-lg">
-                <h3 className="font-bold text-lg mb-2">Configuration Mismatch!</h3>
-                <p>The application's frontend and backend are using different VAPID keys.</p>
-                <p className="mt-2">Please ask the site administrator to redeploy the application and then clear your site data before trying again.</p>
+              <div className="card card-ring bg-[rgba(224,32,32,0.10)] p-4 text-brand-red">
+                <h3 className="text-lg font-semibold text-white">Configuration mismatch</h3>
+                <p className="mt-2 text-sm text-muted">
+                  The application's frontend and backend are using different VAPID keys.
+                </p>
+                <p className="mt-2 text-sm text-muted">
+                  Ask the administrator to redeploy and then clear site data before trying again.
+                </p>
               </div>
           ) : (
           <>
-              <p className="text-gray-600 mb-6">
+              <p className="mb-6 text-sm text-muted">
               This demo shows how to use the Push API to send notifications to users.
               </p>
               <div className="space-y-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                  <h3 className="font-semibold text-lg text-gray-700 mb-2">Status</h3>
+              <div className="card card-ring p-4">
+                  <h3 className="mb-2 text-sm font-semibold text-white">Status</h3>
                   {renderStatus()}
               </div>
               {!isSubscribed && notificationPermission !== 'granted' && (
                   <button
                   onClick={handleRequestPermission}
                   disabled={notificationPermission === 'denied'}
-                  className="w-full bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-150 ease-in-out"
+                  className="btn btn-primary w-full disabled:cursor-not-allowed"
                   >
                   {notificationPermission === 'denied' ? 'Permission Denied' : 'Enable Notifications'}
                   </button>
@@ -274,13 +277,13 @@ const PushNotificationPage: React.FC = () => {
                   <>
                   <button
                       onClick={handleTestNotification}
-                      className="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                      className="btn btn-primary w-full"
                   >
                       Send a Test Notification
                   </button>
                   <button
                       onClick={handleReset}
-                      className="w-full bg-yellow-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-opacity-50 transition duration-150 ease-in-out"
+                      className="btn btn-ghost w-full text-sm"
                   >
                       Reset Subscription
                   </button>
@@ -288,13 +291,14 @@ const PushNotificationPage: React.FC = () => {
               )}
               </div>
               {subscription && (
-              <div className="mt-6 p-4 bg-gray-50 rounded-lg text-xs text-gray-600 overflow-x-auto">
-                  <h4 className="font-semibold text-sm text-gray-700 mb-2">Subscription Details (for debugging)</h4>
+              <div className="card card-ring mt-6 p-4 text-xs text-muted overflow-x-auto">
+                  <h4 className="mb-2 text-sm font-semibold text-white">Subscription Details (for debugging)</h4>
                   <pre><code>{JSON.stringify(subscription, null, 2)}</code></pre>
               </div>
               )}
           </>
           )}
+          </div>
         </div>
       </main>
     </div>
