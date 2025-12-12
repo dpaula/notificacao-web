@@ -1,3 +1,4 @@
+require('dotenv').config();
 const esbuild = require('esbuild');
 const fs = require('fs/promises');
 const path = require('path');
@@ -51,6 +52,14 @@ async function build() {
   
   // 2. Change the script source from the .tsx file to the bundled .js file
   html = html.replace('src="/index.tsx"', 'src="/index.js"');
+
+  // 3. Ensure bundled CSS is loaded (esbuild outputs dist/index.css)
+  if (!html.includes('href="/index.css"')) {
+    html = html.replace(
+      /<\/head>/,
+      '    <link rel="stylesheet" href="/index.css" />\n  </head>'
+    );
+  }
   
   await fs.writeFile(path.join(distDir, 'index.html'), html);
 

@@ -252,24 +252,25 @@ const totalStatusClasses = (
   animating: boolean
 ): string => {
   const base =
-    'rounded-2xl border p-5 shadow-lg shadow-black/15 backdrop-blur flex flex-col items-center gap-2 justify-center min-h-[130px] transition text-center';
+    'relative overflow-hidden rounded-2xl border p-5 shadow-lg shadow-black/15 backdrop-blur flex flex-col items-center gap-2 justify-center min-h-[130px] transition text-center';
   const safeValue = typeof adjustedValue === 'number' ? adjustedValue : 0;
 
   const warnStatuses: StatusTotalOption[] = ['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'];
   const errorStatuses: StatusTotalOption[] = ['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'];
 
   const isAlert = safeValue > config.alertThreshold;
+  const loadingClasses = animating ? 'animate-pulse-soft totals-card-sheen' : '';
 
   if (isAlert && errorStatuses.includes(status)) {
-    return `${base} ${animating ? 'animate-pulse-soft' : ''} border-red-500/50 bg-red-500/12 text-red-50 hover:border-red-400/70`;
+    return `${base} ${loadingClasses} border-red-500/50 bg-red-500/12 text-red-50 hover:border-red-400/70`;
   }
 
   if (isAlert && warnStatuses.includes(status)) {
-    return `${base} ${animating ? 'animate-pulse-soft' : ''} border-amber-400/45 bg-amber-400/12 text-amber-50 hover:border-amber-300/70`;
+    return `${base} ${loadingClasses} border-amber-400/45 bg-amber-400/12 text-amber-50 hover:border-amber-300/70`;
   }
 
   // Within safe range -> verde
-  return `${base} ${animating ? 'animate-pulse-soft' : ''} border-emerald-500/45 bg-emerald-500/12 text-emerald-50 hover:border-emerald-300/70`;
+  return `${base} ${loadingClasses} border-emerald-500/45 bg-emerald-500/12 text-emerald-50 hover:border-emerald-300/70`;
 };
 
 const subtitleByStatus = (status: StatusTotalOption, config: StatusConfig): string => {
@@ -1104,11 +1105,11 @@ const FaturamentosPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800/80 bg-gradient-to-r from-slate-950 via-slate-900/95 to-slate-950 shadow-[0_12px_28px_rgba(8,15,40,0.6)] backdrop-blur-sm">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-6">
-              <img
+	      <header className="border-b border-slate-800/80 bg-gradient-to-r from-slate-950 via-slate-900/95 to-slate-950 shadow-[0_12px_28px_rgba(8,15,40,0.6)] backdrop-blur-sm">
+	        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
+	          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+	            <div className="flex flex-col gap-4 md:flex-row md:items-center md:gap-6">
+	              <img
                 src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
                 alt="Porto Itapoá"
                 className="h-14 w-full max-w-[180px] object-contain md:h-16"
@@ -1129,14 +1130,56 @@ const FaturamentosPage: React.FC = () => {
               className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-100 shadow-lg shadow-black/20 transition hover:border-indigo-400 hover:text-white"
             >
               <GearIcon className="h-4 w-4" />
-              Configurações
-            </button>
-          </div>
+	              Configurações
+	            </button>
+	          </div>
 
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div className="flex flex-wrap items-center gap-4">
-              <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.2em] text-slate-400">
-                Intervalo
+	          <section className="rounded-3xl border border-slate-800/70 bg-slate-950/40 p-4 shadow-xl shadow-black/20">
+	            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+	              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-200">
+	                Totais por status
+	              </p>
+	            </div>
+	            {totalsError && (
+	              <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+	                {totalsError}
+	              </div>
+	            )}
+	            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+	              {STATUS_TOTALS.map((status) => {
+	                const value = totals[status];
+	                const config = statusConfig[status] ?? defaultStatusConfig(status);
+	                const displayed = computeDisplayTotal(value, config);
+	                const isAlert = displayed !== null && displayed > config.alertThreshold;
+	                return (
+	                  <div
+	                    key={status}
+	                    className={totalStatusClasses(status, displayed ?? null, config, totalsAnimating)}
+	                    style={
+	                      totalsAnimating
+	                        ? { animationDelay: `${STATUS_TOTALS.indexOf(status) * 90}ms` }
+	                        : undefined
+	                    }
+	                  >
+	                    <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">
+	                      {status.replace(/_/g, ' ')}
+	                    </p>
+	                    <p className="text-3xl font-semibold leading-tight">
+	                      {displayed !== null ? formatInt(displayed) : totalsLoading ? '...' : '—'}
+	                    </p>
+	                    <p className={`text-xs ${subtitleColor(status, isAlert)}`}>
+	                      {subtitleByStatus(status, config)}
+	                    </p>
+	                  </div>
+	                );
+	              })}
+	            </div>
+	          </section>
+
+	          <div className="flex flex-col gap-4 rounded-3xl border border-slate-800/70 bg-slate-950/30 p-4 shadow-lg shadow-black/15 md:flex-row md:items-end md:justify-between">
+	            <div className="flex flex-wrap items-center gap-4">
+	              <label className="flex flex-col gap-1 text-xs uppercase tracking-[0.2em] text-slate-400">
+	                Intervalo
                 <div className="relative">
                   <select
                     value={intervalFilter}
@@ -1218,21 +1261,21 @@ const FaturamentosPage: React.FC = () => {
               onClick={() => {
                 fetchData({ interval: intervalFilter, status: statusFilter, reset: true, page: 0 });
                 fetchTotals();
-              }}
-              disabled={isLoading}
-              className="inline-flex items-center justify-center rounded-full bg-indigo-500 px-6 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-600"
-            >
-              {isLoading ? 'Atualizando...' : 'Atualizar agora'}
-            </button>
-          </div>
+	              }}
+	              disabled={isLoading}
+	              className="inline-flex w-full items-center justify-center rounded-full bg-indigo-500 px-6 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-600 md:w-auto"
+	            >
+	              {isLoading ? 'Atualizando...' : 'Atualizar agora'}
+	            </button>
+	          </div>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-3 pb-16 pt-8 sm:px-4 md:px-6">
-        <section className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/55 p-5 shadow-lg shadow-black/20 backdrop-blur">
-            <p className="text-xs uppercase tracking-widest text-slate-400">Processos</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{summary.totalProcessos}</p>
+	      <main className="mx-auto w-full max-w-6xl px-3 pb-16 pt-8 sm:px-4 md:px-6">
+	        <section className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+	          <div className="rounded-2xl border border-slate-800 bg-slate-900/55 p-5 shadow-lg shadow-black/20 backdrop-blur">
+	            <p className="text-xs uppercase tracking-widest text-slate-400">Processos</p>
+	            <p className="mt-2 text-3xl font-semibold text-white">{summary.totalProcessos}</p>
             <p className="mt-1 text-xs text-slate-500">Total retornado pelo webhook</p>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-900/55 p-5 shadow-lg shadow-black/20 backdrop-blur">
@@ -1250,55 +1293,14 @@ const FaturamentosPage: React.FC = () => {
             <p className="mt-2 text-lg font-semibold text-white">
               {lastUpdated ? formatDateTime(lastUpdated.toISOString()) : '—'}
             </p>
-            <p className="mt-1 text-xs text-slate-500">Horário da última consulta manual</p>
-          </div>
-        </section>
+	            <p className="mt-1 text-xs text-slate-500">Horário da última consulta manual</p>
+	          </div>
+	        </section>
 
-        <section className="mt-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Totais Por Status</p>
-          </div>
-          {totalsError && (
-            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
-              {totalsError}
-            </div>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-            {STATUS_TOTALS.map((status) => {
-              const value = totals[status];
-              const config = statusConfig[status] ?? defaultStatusConfig(status);
-              const displayed = computeDisplayTotal(value, config);
-              const isAlert =
-                displayed !== null && displayed > config.alertThreshold;
-              return (
-                <div
-                  key={status}
-                  className={totalStatusClasses(status, displayed ?? null, config, totalsAnimating)}
-                  style={
-                    totalsAnimating
-                      ? { animationDelay: `${STATUS_TOTALS.indexOf(status) * 90}ms` }
-                      : undefined
-                  }
-                >
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">
-                    {status.replace(/_/g, ' ')}
-                  </p>
-                  <p className="text-3xl font-semibold leading-tight">
-                    {displayed !== null ? formatInt(displayed) : totalsLoading ? '...' : '—'}
-                  </p>
-                  <p className={`text-xs ${subtitleColor(status, isAlert)}`}>
-                    {subtitleByStatus(status, config)}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="mt-10">
-          {error && (
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-200">
-              {error}
+	        <section className="mt-6">
+	          {error && (
+	            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-sm text-red-200">
+	              {error}
             </div>
           )}
 
