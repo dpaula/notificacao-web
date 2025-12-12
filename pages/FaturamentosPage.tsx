@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import './animations.css';
 
 type FaturamentoItem = {
   id: string;
@@ -18,6 +19,27 @@ type FaturamentoItem = {
   alteradoEm?: string;
   novoModelo?: boolean;
   nrTentativas?: number;
+  resumo?: FaturamentoResumo;
+};
+
+type FaturamentoResumo = {
+  id: string;
+  draft: number;
+  tipo: string;
+  status: string;
+  statusErp?: string;
+  cnpjCliente?: string;
+  nomeCliente?: string;
+  valorTotal?: number;
+  nfseNumero?: number;
+  nfseSerie?: string;
+  nfseArquivoGerador?: string;
+  nfseCodVerificadorAutenticidade?: string;
+  nfseLink?: string;
+  urlFinalPdfNFSe?: string;
+  nfseDataEmissao?: string;
+  dataVencimento?: string;
+  urlPdfNf?: string | null;
 };
 
 const WEBHOOK_URL = 'https://n8n.autevia.com.br/webhook/fats';
@@ -36,6 +58,16 @@ const STATUS_OPTIONS = [
 ] as const;
 
 type StatusOption = (typeof STATUS_OPTIONS)[number];
+type StatusTotalOption = StatusOption;
+
+const STATUS_TOTALS = STATUS_OPTIONS;
+
+type StatusConfig = {
+  alertThreshold: number;
+  startFrom: number;
+};
+
+type StatusConfigMap = Record<StatusTotalOption, StatusConfig>;
 
 const SORT_OPTIONS = ['date', 'draft', 'status'] as const;
 type SortOption = (typeof SORT_OPTIONS)[number];
@@ -55,6 +87,21 @@ const CopyIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const GearIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09A1.65 1.65 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+
 const extractTagValue = (xml: string | undefined, tagName: string): string | null => {
   if (!xml) return null;
   const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
@@ -71,6 +118,44 @@ const formatDateTime = (iso?: string, fallback?: string): string => {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(date);
+};
+
+const formatCurrencyBRL = (value?: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 }).format(
+    value
+  );
+};
+
+const formatInt = (value?: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(value);
+};
+
+type StatusTotalsMap = Record<StatusTotalOption, number | null>;
+
+const STATUS_CONFIG_STORAGE_KEY = 'porto_nfse_status_config';
+const TOTALS_REFRESH_STORAGE_KEY = 'porto_nfse_totals_refresh';
+
+const defaultStatusConfig = (status: StatusTotalOption): StatusConfig => {
+  if (['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'].includes(status)) {
+    return { alertThreshold: 0, startFrom: 0 };
+  }
+  if (['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'].includes(status)) {
+    return { alertThreshold: 20, startFrom: 0 };
+  }
+  return { alertThreshold: 0, startFrom: 0 };
+};
+
+const buildDefaultStatusConfigMap = (): StatusConfigMap =>
+  STATUS_TOTALS.reduce<StatusConfigMap>((acc, status) => {
+    acc[status] = defaultStatusConfig(status);
+    return acc;
+  }, {} as StatusConfigMap);
+
+const clampRefreshSeconds = (value: number): number => {
+  if (Number.isNaN(value)) return 30;
+  return Math.min(120, Math.max(5, value));
 };
 
 type ParsedResponse = {
@@ -158,6 +243,53 @@ const statusBadgeClassName = (status: string): string => {
     default:
       return `${base} border border-slate-600 bg-slate-800/60 text-slate-200`;
   }
+};
+
+const totalStatusClasses = (
+  status: StatusTotalOption,
+  adjustedValue: number | null,
+  config: StatusConfig,
+  animating: boolean
+): string => {
+  const base =
+    'rounded-2xl border p-5 shadow-lg shadow-black/15 backdrop-blur flex flex-col items-center gap-2 justify-center min-h-[130px] transition text-center';
+  const safeValue = typeof adjustedValue === 'number' ? adjustedValue : 0;
+
+  const warnStatuses: StatusTotalOption[] = ['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'];
+  const errorStatuses: StatusTotalOption[] = ['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'];
+
+  const isAlert = safeValue > config.alertThreshold;
+
+  if (isAlert && errorStatuses.includes(status)) {
+    return `${base} ${animating ? 'animate-pulse-soft' : ''} border-red-500/50 bg-red-500/12 text-red-50 hover:border-red-400/70`;
+  }
+
+  if (isAlert && warnStatuses.includes(status)) {
+    return `${base} ${animating ? 'animate-pulse-soft' : ''} border-amber-400/45 bg-amber-400/12 text-amber-50 hover:border-amber-300/70`;
+  }
+
+  // Within safe range -> verde
+  return `${base} ${animating ? 'animate-pulse-soft' : ''} border-emerald-500/45 bg-emerald-500/12 text-emerald-50 hover:border-emerald-300/70`;
+};
+
+const subtitleByStatus = (status: StatusTotalOption, config: StatusConfig): string => {
+  if (status === 'ENVIADO_SAP') return 'Fluxos concluídos';
+  if (['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'].includes(status)) {
+    return `Alerta total > ${config.alertThreshold}`;
+  }
+  return `Alerta > ${config.alertThreshold}`;
+};
+
+const subtitleColor = (status: StatusTotalOption, isAlert: boolean): string => {
+  if (status === 'ENVIADO_SAP') return 'text-emerald-100/90';
+  if (isAlert && ['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'].includes(status)) return 'text-red-100/90';
+  if (isAlert) return 'text-amber-100/90';
+  return 'text-emerald-100/90';
+};
+
+const computeDisplayTotal = (value: number | null, config: StatusConfig): number | null => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return Math.max(0, value - (config.startFrom ?? 0));
 };
 
 const TEMP_USERS = [
@@ -355,6 +487,64 @@ const FaturamentosPage: React.FC = () => {
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [rememberDevice, setRememberDevice] = useState<boolean>(true);
+  const [totals, setTotals] = useState<StatusTotalsMap>(() =>
+    STATUS_TOTALS.reduce((acc, status) => ({ ...acc, [status]: null }), {} as StatusTotalsMap)
+  );
+  const [totalsLoading, setTotalsLoading] = useState<boolean>(false);
+  const [totalsError, setTotalsError] = useState<string | null>(null);
+  const [totalsAnimating, setTotalsAnimating] = useState<boolean>(false);
+  const totalsAnimationTimeoutRef = useRef<number | null>(null);
+  const [statusConfig, setStatusConfig] = useState<StatusConfigMap>(() => {
+    if (typeof window === 'undefined') return buildDefaultStatusConfigMap();
+    try {
+      const stored = window.localStorage.getItem(STATUS_CONFIG_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<StatusConfigMap>;
+        const base = buildDefaultStatusConfigMap();
+        STATUS_TOTALS.forEach((status) => {
+          const conf = parsed?.[status];
+          base[status] = {
+            alertThreshold: typeof conf?.alertThreshold === 'number' ? conf.alertThreshold : base[status].alertThreshold,
+            startFrom: typeof conf?.startFrom === 'number' ? conf.startFrom : base[status].startFrom,
+          };
+        });
+        return base;
+      }
+    } catch (err) {
+      console.warn('[FaturamentosPage] Falha ao restaurar configurações', err);
+    }
+    return buildDefaultStatusConfigMap();
+  });
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [sessionValidateLoading, setSessionValidateLoading] = useState(false);
+  const [sessionValidateResult, setSessionValidateResult] = useState<
+    { valido: boolean; fileId?: string; mensagem?: string } | null
+  >(null);
+  const [sessionUpdateLoading, setSessionUpdateLoading] = useState(false);
+  const [sessionUpdateValue, setSessionUpdateValue] = useState('');
+  const [sessionUpdateResult, setSessionUpdateResult] = useState<{ mensagem: string } | null>(null);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = window.localStorage.getItem(TOTALS_REFRESH_STORAGE_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { enabled?: boolean };
+      return Boolean(parsed?.enabled);
+    } catch {
+      return false;
+    }
+  });
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState<number>(() => {
+    if (typeof window === 'undefined') return 30;
+    try {
+      const raw = window.localStorage.getItem(TOTALS_REFRESH_STORAGE_KEY);
+      if (!raw) return 30;
+      const parsed = JSON.parse(raw) as { seconds?: number };
+      return clampRefreshSeconds(parsed?.seconds ?? 30);
+    } catch {
+      return 30;
+    }
+  });
 
   const hasFetchedInitially = useRef(false);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -402,6 +592,19 @@ const FaturamentosPage: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(STATUS_CONFIG_STORAGE_KEY, JSON.stringify(statusConfig));
+  }, [statusConfig]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      TOTALS_REFRESH_STORAGE_KEY,
+      JSON.stringify({ enabled: autoRefreshEnabled, seconds: autoRefreshSeconds })
+    );
+  }, [autoRefreshEnabled, autoRefreshSeconds]);
+
   const fetchData = useCallback(
     async (override?: {
       interval?: IntervalOption;
@@ -429,6 +632,7 @@ const FaturamentosPage: React.FC = () => {
 
       try {
         const url = new URL(WEBHOOK_URL);
+        url.searchParams.set('resource', 'lista-resumo');
         url.searchParams.set('interval', intervalValue);
         url.searchParams.set('page', String(page));
         if (statusValue) {
@@ -480,6 +684,60 @@ const FaturamentosPage: React.FC = () => {
     [activeInterval, activeStatus, isAuthenticated]
   );
 
+  const fetchTotals = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setTotalsLoading(true);
+    setTotalsAnimating(true);
+    if (totalsAnimationTimeoutRef.current) {
+      window.clearTimeout(totalsAnimationTimeoutRef.current);
+      totalsAnimationTimeoutRef.current = null;
+    }
+    setTotalsError(null);
+    try {
+      const entries = await Promise.all(
+        STATUS_TOTALS.map(async (status) => {
+          const url = new URL(WEBHOOK_URL);
+          url.searchParams.set('resource', 'total');
+          url.searchParams.set('status', status);
+          const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+          if (!response.ok) {
+            throw new Error(`Falha ao consultar total (${status})`);
+          }
+          const data = await response.json();
+          const value =
+            typeof data === 'number'
+              ? data
+              : typeof (data as { total?: number }).total === 'number'
+              ? (data as { total: number }).total
+              : 0;
+          return [status, value] as const;
+        })
+      );
+      const nextTotals = entries.reduce<StatusTotalsMap>(
+        (acc, [status, value]) => ({ ...acc, [status]: value }),
+        STATUS_TOTALS.reduce((acc, status) => ({ ...acc, [status]: null }), {} as StatusTotalsMap)
+      );
+      setTotals(nextTotals);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Falha ao carregar totais por status.';
+      setTotalsError(message);
+    } finally {
+      setTotalsLoading(false);
+      totalsAnimationTimeoutRef.current = window.setTimeout(() => {
+        setTotalsAnimating(false);
+        totalsAnimationTimeoutRef.current = null;
+      }, 900);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!autoRefreshEnabled || !isAuthenticated) return;
+    const id = window.setInterval(() => {
+      fetchTotals();
+    }, clampRefreshSeconds(autoRefreshSeconds) * 1000);
+    return () => window.clearInterval(id);
+  }, [autoRefreshEnabled, autoRefreshSeconds, fetchTotals, isAuthenticated]);
+
   useEffect(() => {
     if (!isAuthenticated) {
       hasFetchedInitially.current = false;
@@ -492,7 +750,8 @@ const FaturamentosPage: React.FC = () => {
 
     hasFetchedInitially.current = true;
     fetchData({ interval: '15m', status: '', reset: true, page: 0 });
-  }, [fetchData, isAuthenticated]);
+    fetchTotals();
+  }, [fetchData, fetchTotals, isAuthenticated]);
 
   const filteredItems = useMemo(() => {
     const query = draftFilter.trim();
@@ -578,6 +837,71 @@ const FaturamentosPage: React.FC = () => {
 
   const handleSortChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setSortOption(event.target.value as SortOption);
+  };
+
+  const handleStatusConfigChange = (
+    status: StatusTotalOption,
+    field: keyof StatusConfig,
+    value: number
+  ) => {
+    setStatusConfig((prev) => ({
+      ...prev,
+      [status]: {
+        ...prev[status],
+        [field]: Number.isFinite(value) && value >= 0 ? value : prev[status][field],
+      },
+    }));
+  };
+
+  const handleAutoRefreshSecondsChange = (value: number) => {
+    setAutoRefreshSeconds(clampRefreshSeconds(value));
+  };
+
+  const toggleAutoRefresh = () => {
+    setAutoRefreshEnabled((prev) => !prev);
+  };
+
+  const handleValidateSession = async () => {
+    setSessionValidateLoading(true);
+    setSessionValidateResult(null);
+    try {
+      const url = new URL(WEBHOOK_URL);
+      url.searchParams.set('resource', 'validar-sessao');
+      const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+      if (!response.ok) {
+        throw new Error(`Falha ao validar sessão (status ${response.status})`);
+      }
+      const data = await response.json();
+      setSessionValidateResult(data);
+    } catch (err) {
+      setSessionValidateResult({ valido: false, mensagem: err instanceof Error ? err.message : 'Erro ao validar' });
+    } finally {
+      setSessionValidateLoading(false);
+    }
+  };
+
+  const handleUpdateSession = async () => {
+    if (!sessionUpdateValue.trim()) {
+      setSessionUpdateResult({ mensagem: 'Informe um token PHPSESSID.' });
+      return;
+    }
+    setSessionUpdateLoading(true);
+    setSessionUpdateResult(null);
+    try {
+      const url = new URL(WEBHOOK_URL);
+      url.searchParams.set('resource', 'update-phpsessid');
+      url.searchParams.set('phpsessid', sessionUpdateValue.trim());
+      const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+      if (!response.ok) {
+        throw new Error(`Falha ao atualizar token (status ${response.status})`);
+      }
+      const data = await response.json();
+      setSessionUpdateResult({ mensagem: `Token atualizado: ${data?.phpSessId ?? 'ok'}` });
+    } catch (err) {
+      setSessionUpdateResult({ mensagem: err instanceof Error ? err.message : 'Erro ao atualizar token' });
+    } finally {
+      setSessionUpdateLoading(false);
+    }
   };
 
   const handleRememberChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -799,6 +1123,14 @@ const FaturamentosPage: React.FC = () => {
                 </p>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="inline-flex items-center gap-2 self-start rounded-full border border-slate-800 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-100 shadow-lg shadow-black/20 transition hover:border-indigo-400 hover:text-white"
+            >
+              <GearIcon className="h-4 w-4" />
+              Configurações
+            </button>
           </div>
 
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -883,7 +1215,10 @@ const FaturamentosPage: React.FC = () => {
 
             <button
               type="button"
-              onClick={() => fetchData({ interval: intervalFilter, status: statusFilter, reset: true, page: 0 })}
+              onClick={() => {
+                fetchData({ interval: intervalFilter, status: statusFilter, reset: true, page: 0 });
+                fetchTotals();
+              }}
               disabled={isLoading}
               className="inline-flex items-center justify-center rounded-full bg-indigo-500 px-6 py-2 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-slate-600"
             >
@@ -916,6 +1251,47 @@ const FaturamentosPage: React.FC = () => {
               {lastUpdated ? formatDateTime(lastUpdated.toISOString()) : '—'}
             </p>
             <p className="mt-1 text-xs text-slate-500">Horário da última consulta manual</p>
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">Totais Por Status</p>
+          </div>
+          {totalsError && (
+            <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+              {totalsError}
+            </div>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+            {STATUS_TOTALS.map((status) => {
+              const value = totals[status];
+              const config = statusConfig[status] ?? defaultStatusConfig(status);
+              const displayed = computeDisplayTotal(value, config);
+              const isAlert =
+                displayed !== null && displayed > config.alertThreshold;
+              return (
+                <div
+                  key={status}
+                  className={totalStatusClasses(status, displayed ?? null, config, totalsAnimating)}
+                  style={
+                    totalsAnimating
+                      ? { animationDelay: `${STATUS_TOTALS.indexOf(status) * 90}ms` }
+                      : undefined
+                  }
+                >
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                    {status.replace(/_/g, ' ')}
+                  </p>
+                  <p className="text-3xl font-semibold leading-tight">
+                    {displayed !== null ? formatInt(displayed) : totalsLoading ? '...' : '—'}
+                  </p>
+                  <p className={`text-xs ${subtitleColor(status, isAlert)}`}>
+                    {subtitleByStatus(status, config)}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -997,11 +1373,110 @@ const FaturamentosPage: React.FC = () => {
                         <dt className="text-xs uppercase tracking-widest text-slate-400">Tipo</dt>
                         <dd className="mt-1 text-lg font-medium text-slate-100">{item.tipo}</dd>
                       </div>
-                      <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
-                        <dt className="text-xs uppercase tracking-widest text-slate-400">Data emissão</dt>
-                        <dd className="mt-1 text-lg font-medium text-slate-100">{composedData}</dd>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+                    <dt className="text-xs uppercase tracking-widest text-slate-400">Data emissão</dt>
+                    <dd className="mt-1 text-lg font-medium text-slate-100">{composedData}</dd>
+                  </div>
+                </dl>
+
+                    {item.status === 'ENVIADO_SAP' && item.resumo && (
+                      <div className="mt-5 rounded-2xl border border-emerald-600/30 bg-emerald-900/20 p-4 shadow-inner shadow-emerald-900/30">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-200">
+                            Resumo completo (SAP)
+                          </p>
+                          {item.resumo.statusErp && (
+                            <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-100">
+                              {item.resumo.statusErp.replace(/_/g, ' ')}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">Cliente</p>
+                            <p className="mt-1 text-sm text-emerald-50">{item.resumo.nomeCliente ?? '—'}</p>
+                            {item.resumo.cnpjCliente && (
+                              <p className="text-[11px] text-emerald-200/80">CNPJ {item.resumo.cnpjCliente}</p>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">Valor</p>
+                            <p className="mt-1 text-sm font-semibold text-emerald-50">
+                              {formatCurrencyBRL(item.resumo.valorTotal)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">NFSe</p>
+                            <p className="mt-1 text-sm text-emerald-50">
+                              {item.resumo.nfseNumero
+                                ? `#${item.resumo.nfseNumero} · Série ${item.resumo.nfseSerie ?? '—'}`
+                                : '—'}
+                            </p>
+                            {item.resumo.nfseCodVerificadorAutenticidade && (
+                              <p className="text-[11px] text-emerald-200/80">
+                                {item.resumo.nfseCodVerificadorAutenticidade}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">Emissão</p>
+                            <p className="mt-1 text-sm text-emerald-50">
+                              {formatDateTime(item.resumo.nfseDataEmissao, '—')}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">Vencimento</p>
+                            <p className="mt-1 text-sm text-emerald-50">
+                              {formatDateTime(item.resumo.dataVencimento, '—')}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.28em] text-emerald-200">Links</p>
+                            <div className="mt-1 space-y-1 text-sm">
+                              {item.resumo.nfseLink && (
+                                <a
+                                  className="block truncate text-emerald-200 underline decoration-emerald-400/70 decoration-dotted underline-offset-4 hover:text-emerald-100"
+                                  href={item.resumo.nfseLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Ver NFSe
+                                </a>
+                              )}
+                              {item.resumo.urlFinalPdfNFSe && (
+                                <a
+                                  className="block truncate text-emerald-200 underline decoration-emerald-400/70 decoration-dotted underline-offset-4 hover:text-emerald-100"
+                                  href={item.resumo.urlFinalPdfNFSe}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  PDF NFSe
+                                </a>
+                              )}
+                              {item.resumo.urlPdfNf && (
+                                <a
+                                  className="block truncate text-emerald-200 underline decoration-emerald-400/70 decoration-dotted underline-offset-4 hover:text-emerald-100"
+                                  href={item.resumo.urlPdfNf}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  PDF Faturamento
+                                </a>
+                              )}
+                              {!item.resumo.nfseLink && !item.resumo.urlFinalPdfNFSe && !item.resumo.urlPdfNf && (
+                                <span className="text-emerald-200/70">—</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </dl>
+                    )}
 
                     <details className="group mt-6">
                       <summary className="flex cursor-pointer list-none items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/55 px-4 py-3 text-sm text-slate-300 transition hover:border-indigo-400 hover:text-white">
@@ -1034,6 +1509,179 @@ const FaturamentosPage: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 backdrop-blur">
+          <div className="w-full max-w-4xl rounded-3xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl shadow-black/40">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.28em] text-indigo-300">Painel</p>
+                <h2 className="text-2xl font-semibold text-white">Configurações</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="rounded-full border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-indigo-400 hover:text-white"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Alertas por status</p>
+                    <p className="text-sm text-slate-400">Defina limiar e início de contagem.</p>
+                  </div>
+                </div>
+                <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
+                  {STATUS_TOTALS.map((status) => {
+                    const conf = statusConfig[status] ?? defaultStatusConfig(status);
+                    return (
+                      <div
+                        key={status}
+                        className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-3 shadow-inner shadow-black/10"
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300 mb-2">
+                          {status.replace(/_/g, ' ')}
+                        </p>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <label className="space-y-1 text-xs text-slate-400">
+                            <span>Alerta &gt;</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={conf.alertThreshold}
+                              onChange={(e) =>
+                                handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
+                              }
+                              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs text-slate-400">
+                            <span>Início de contagem</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={conf.startFrom}
+                              onChange={(e) => handleStatusConfigChange(status, 'startFrom', Number(e.target.value))}
+                              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Token de sessão</p>
+                    <p className="text-sm text-slate-400">Validar e atualizar PHPSESSID.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleValidateSession}
+                    disabled={sessionValidateLoading}
+                    className="inline-flex items-center gap-2 rounded-full border border-indigo-500/50 bg-indigo-500/10 px-4 py-2 text-sm font-semibold text-indigo-100 transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {sessionValidateLoading ? 'Validando...' : 'Validar token de sessão'}
+                  </button>
+                  {sessionValidateResult && (
+                    <div
+                      className={`rounded-lg border px-3 py-2 text-xs ${
+                        sessionValidateResult.valido
+                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                          : 'border-red-500/40 bg-red-500/10 text-red-100'
+                      }`}
+                    >
+                      <p className="font-semibold">
+                        {sessionValidateResult.valido ? 'Token válido' : 'Token inválido ou erro'}
+                      </p>
+                      {sessionValidateResult.fileId && <p>fileId: {sessionValidateResult.fileId}</p>}
+                      {sessionValidateResult.mensagem && <p>{sessionValidateResult.mensagem}</p>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400">Novo PHPSESSID</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={sessionUpdateValue}
+                      onChange={(e) => setSessionUpdateValue(e.target.value)}
+                      className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/30"
+                      placeholder="Digite o token PHPSESSID"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleUpdateSession}
+                      disabled={sessionUpdateLoading}
+                      className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {sessionUpdateLoading ? 'Atualizando...' : 'Atualizar'}
+                    </button>
+                  </div>
+                  {sessionUpdateResult && (
+                    <p className="text-xs text-slate-200">{sessionUpdateResult.mensagem}</p>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Auto refresh</p>
+                      <p className="text-sm text-slate-400">Atualizar totais automaticamente.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={toggleAutoRefresh}
+                      className={`relative h-[1.5rem] w-[2.6rem] rounded-full border transition ${
+                        autoRefreshEnabled
+                          ? 'border-emerald-400/70 bg-emerald-500/60'
+                          : 'border-slate-600 bg-slate-800'
+                      }`}
+                      aria-pressed={autoRefreshEnabled}
+                    >
+                      <span
+                        className={`absolute top-[0.20rem] left-[0.20rem] h-[1.1rem] w-[1.1rem] rounded-full bg-white shadow transition ${
+                          autoRefreshEnabled ? 'translate-x-[1.05rem]' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400">Tempo entre refresh (segundos)</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={5}
+                      max={120}
+                      step={1}
+                      disabled={!autoRefreshEnabled}
+                      value={autoRefreshSeconds}
+                      onChange={(e) => handleAutoRefreshSecondsChange(Number(e.target.value))}
+                      className="w-20 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <span className="text-[11px] text-slate-500">
+                      Min 5s · Max 120s · Desligado por padrão.
+                    </span>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

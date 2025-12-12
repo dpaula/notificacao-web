@@ -36,7 +36,11 @@ async function build() {
       'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(vapidPublicKey),
       'import.meta.env.VITE_CHATKIT_WORKFLOW_ID': JSON.stringify(chatkitWorkflowId),
     },
-    loader: { '.tsx': 'tsx' },
+    loader: {
+      '.tsx': 'tsx',
+      '.ts': 'ts',
+      '.css': 'css',
+    },
   }).catch(() => process.exit(1));
 
   // Process and copy index.html for production
