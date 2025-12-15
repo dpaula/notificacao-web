@@ -154,14 +154,26 @@ type StatusTotalsMap = Record<StatusTotalOption, number | null>;
 const STATUS_CONFIG_STORAGE_KEY = 'porto_nfse_status_config';
 const TOTALS_REFRESH_STORAGE_KEY = 'porto_nfse_totals_refresh';
 
+const DEFAULT_STATUS_START_FROM: Record<StatusTotalOption, number> = {
+  PENDENTE: 0,
+  DRAFT_PENDENTE: 58,
+  PROCESSANDO_INTEGRACAO: 5,
+  ERRO_PREFEITURA: 0,
+  ERRO_SAP: 1814,
+  ENVIADO_SAP: 0,
+  ERRO_PROCESSAMENTO: 9,
+};
+
 const defaultStatusConfig = (status: StatusTotalOption): StatusConfig => {
+  const startFrom = DEFAULT_STATUS_START_FROM[status] ?? 0;
+
   if (['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'].includes(status)) {
-    return { alertThreshold: 0, startFrom: 0 };
+    return { alertThreshold: 0, startFrom };
   }
   if (['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'].includes(status)) {
-    return { alertThreshold: 20, startFrom: 0 };
+    return { alertThreshold: 20, startFrom };
   }
-  return { alertThreshold: 0, startFrom: 0 };
+  return { alertThreshold: 0, startFrom };
 };
 
 const buildDefaultStatusConfigMap = (): StatusConfigMap =>
