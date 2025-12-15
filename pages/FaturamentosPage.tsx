@@ -649,6 +649,8 @@ const FaturamentosPage: React.FC = () => {
   });
 
   const hasFetchedInitially = useRef(false);
+  const restoreStatusNoticeTimeoutRef = useRef<number | null>(null);
+  const [statusDefaultsRestored, setStatusDefaultsRestored] = useState(false);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [loadedPages, setLoadedPages] = useState<number[]>([]);
   const [activeInterval, setActiveInterval] = useState<IntervalOption>('15m');
@@ -1055,6 +1057,20 @@ const FaturamentosPage: React.FC = () => {
     }));
   };
 
+  const handleRestoreStatusDefaults = () => {
+    const defaults = buildDefaultStatusConfigMap();
+    setStatusConfig(defaults);
+    setStatusDefaultsRestored(true);
+    if (restoreStatusNoticeTimeoutRef.current) {
+      window.clearTimeout(restoreStatusNoticeTimeoutRef.current);
+      restoreStatusNoticeTimeoutRef.current = null;
+    }
+    restoreStatusNoticeTimeoutRef.current = window.setTimeout(() => {
+      setStatusDefaultsRestored(false);
+      restoreStatusNoticeTimeoutRef.current = null;
+    }, 2200);
+  };
+
   const handleAutoRefreshSecondsChange = (value: number) => {
     setAutoRefreshSeconds(clampRefreshSeconds(value));
   };
@@ -1201,6 +1217,9 @@ const FaturamentosPage: React.FC = () => {
     () => () => {
       if (copyTimeoutRef.current) {
         window.clearTimeout(copyTimeoutRef.current);
+      }
+      if (restoreStatusNoticeTimeoutRef.current) {
+        window.clearTimeout(restoreStatusNoticeTimeoutRef.current);
       }
     },
     []
@@ -1868,56 +1887,72 @@ const FaturamentosPage: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 pb-[calc(18px+env(safe-area-inset-bottom))] pt-5 sm:px-6">
-              <div className="grid gap-6 lg:grid-cols-2">
+              <div className="grid gap-6 lg:grid-cols-2 lg:items-stretch">
               <section className="card card-ring space-y-4 p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Alertas por status</p>
-                    <p className="text-sm text-muted">Defina limiar e início de contagem.</p>
-                  </div>
-                </div>
-                <div className="space-y-3 md:max-h-[360px] md:overflow-auto md:pr-1">
-                  {STATUS_TOTALS.map((status) => {
-                    const conf = statusConfig[status] ?? defaultStatusConfig(status);
-                    return (
-                      <div
-                        key={status}
-                        className="card card-ring p-3"
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+                        Alertas por status
+                      </p>
+                      <p className="text-sm text-muted">Defina limiar e início de contagem.</p>
+                    </div>
+                    <div className="flex items-center gap-3 sm:justify-end">
+                      {statusDefaultsRestored && (
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-brand-lime">
+                          Padrões restaurados
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleRestoreStatusDefaults}
+                        className="btn btn-ghost whitespace-nowrap text-xs"
                       >
-                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
-                          {status.replace(/_/g, ' ')}
-                        </p>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <label className="space-y-1 text-xs text-muted">
-                            <span>Alerta &gt;</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={conf.alertThreshold}
-                              onChange={(e) =>
-                                handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
-                              }
-                              className="input-field input-field-rect text-sm"
-                            />
-                          </label>
-                          <label className="space-y-1 text-xs text-muted">
-                            <span>Início de contagem</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={conf.startFrom}
-                              onChange={(e) => handleStatusConfigChange(status, 'startFrom', Number(e.target.value))}
-                              className="input-field input-field-rect text-sm"
-                            />
-                          </label>
+                        Restaurar padrão
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-3 md:max-h-[360px] md:overflow-auto md:pr-1">
+                    {STATUS_TOTALS.map((status) => {
+                      const conf = statusConfig[status] ?? defaultStatusConfig(status);
+                      return (
+                        <div
+                          key={status}
+                          className="card card-ring p-3"
+                        >
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
+                            {status.replace(/_/g, ' ')}
+                          </p>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <label className="space-y-1 text-xs text-muted">
+                              <span>Alerta &gt;</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={conf.alertThreshold}
+                                onChange={(e) =>
+                                  handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
+                                }
+                                className="input-field input-field-rect text-sm"
+                              />
+                            </label>
+                            <label className="space-y-1 text-xs text-muted">
+                              <span>Início de contagem</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={conf.startFrom}
+                                onChange={(e) => handleStatusConfigChange(status, 'startFrom', Number(e.target.value))}
+                                className="input-field input-field-rect text-sm"
+                              />
+                            </label>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
+                      );
+                    })}
+                  </div>
+                </section>
 
-              <section className="card card-ring space-y-4 p-4">
+              <section className="card card-ring space-y-4 p-4 lg:row-span-2 lg:h-full lg:flex lg:flex-col">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Token de sessão</p>
