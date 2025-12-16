@@ -65,6 +65,8 @@ const STATUS_TOTALS = STATUS_OPTIONS;
 type StatusConfig = {
   alertThreshold: number;
   startFrom: number;
+  notifyWhatsApp: boolean;
+  notifyAfterMinutes: number;
 };
 
 type StatusConfigMap = Record<StatusTotalOption, StatusConfig>;
@@ -102,6 +104,21 @@ const GearIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const BellIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+  </svg>
+);
+
 const RefreshIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     viewBox="0 0 24 24"
@@ -117,6 +134,34 @@ const RefreshIcon: React.FC<{ className?: string }> = ({ className }) => (
     <path d="M4 13a8 8 0 0 0 14.66 4" />
     <path d="M20 20v-4h-4" />
   </svg>
+);
+
+type SwitchButtonProps = {
+  checked: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  ariaLabel?: string;
+};
+
+const SwitchButton: React.FC<SwitchButtonProps> = ({ checked, onToggle, disabled = false, ariaLabel }) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    disabled={disabled}
+    aria-pressed={checked}
+    aria-label={ariaLabel}
+    className={`relative h-[1.75rem] w-[3.1rem] rounded-full border transition ${
+      checked
+        ? 'border-[rgba(0,112,80,0.65)] bg-[rgba(0,112,80,0.55)]'
+        : 'border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.06)]'
+    } disabled:cursor-not-allowed disabled:opacity-50`}
+  >
+    <span
+      className={`absolute top-[0.20rem] left-[0.20rem] h-[1.35rem] w-[1.35rem] rounded-full bg-white shadow transition ${
+        checked ? 'translate-x-[1.35rem]' : 'translate-x-0'
+      }`}
+    />
+  </button>
 );
 
 const extractTagValue = (xml: string | undefined, tagName: string): string | null => {
@@ -153,6 +198,174 @@ type StatusTotalsMap = Record<StatusTotalOption, number | null>;
 
 const STATUS_CONFIG_STORAGE_KEY = 'porto_nfse_status_config';
 const TOTALS_REFRESH_STORAGE_KEY = 'porto_nfse_totals_refresh';
+const WHATSAPP_PROFILE_COOKIE_KEY = 'porto_nfse_whatsapp_profile';
+const WHATSAPP_VERIFICATION_STORAGE_KEY = 'porto_nfse_whatsapp_verification';
+const STATUS_ALERT_STATE_STORAGE_KEY = 'porto_nfse_status_alert_state';
+
+const WHATSAPP_PROFILE_COOKIE_DAYS = 90;
+const WHATSAPP_CODE_TTL_MS = 1000 * 60 * 5;
+const WHATSAPP_CODE_COOLDOWN_MS = 1000 * 30;
+const DEFAULT_STATUS_NOTIFY_AFTER_MINUTES = 120;
+const MIN_STATUS_NOTIFY_AFTER_MINUTES = 5;
+const MAX_STATUS_NOTIFY_AFTER_MINUTES = 360;
+const WHATSAPP_COOKIE_PATH = '/faturamentos';
+
+type WhatsAppProfile = {
+  numero: string;
+  verifiedAt: number;
+};
+
+type WhatsAppVerificationState = {
+  numero: string;
+  code: string;
+  sentAt: number;
+  expiresAt: number;
+};
+
+type NotificationChannel = 'email' | 'push' | 'whatsapp';
+
+const normalizeDigits = (value: string): string => value.replace(/\D/g, '');
+
+const stripBrazilCountryCode = (value: string): string => {
+  const digits = normalizeDigits(value);
+  return digits.startsWith('55') ? digits.slice(2) : digits;
+};
+
+const normalizeBrazilWhatsAppNumber = (value: string): string => {
+  const digits = stripBrazilCountryCode(value);
+  if (!digits || digits.length < 10 || digits.length > 11) return '';
+  return `55${digits}`;
+};
+
+const formatBrazilPhoneMask = (value: string): string => {
+  const digits = stripBrazilCountryCode(value).slice(0, 11);
+  if (!digits) return '';
+
+  if (digits.length < 3) return `(${digits}`;
+
+  const ddd = digits.slice(0, 2);
+  const rest = digits.slice(2);
+  let formatted = `(${ddd})`;
+  if (!rest) return formatted;
+
+  const isMobile = digits.length === 11 || rest.startsWith('9');
+  if (isMobile) {
+    const first = rest.slice(0, 1);
+    const part1 = rest.slice(1, 5);
+    const part2 = rest.slice(5, 9);
+    formatted += first;
+    if (rest.length > 1) formatted += ` ${part1}`;
+    if (rest.length > 5) formatted += `-${part2}`;
+    return formatted;
+  }
+
+  const part1 = rest.slice(0, 4);
+  const part2 = rest.slice(4, 8);
+  formatted += part1;
+  if (rest.length > 4) formatted += `-${part2}`;
+  return formatted;
+};
+
+const formatBrazilWhatsAppDisplay = (value: string): string => {
+  const digits = stripBrazilCountryCode(value);
+  const masked = formatBrazilPhoneMask(digits);
+  if (!masked) return '';
+  return `+55 ${masked}`;
+};
+
+const formatDurationShort = (ms: number): string => {
+  const totalMinutes = Math.max(0, Math.floor(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes}m`;
+  if (minutes <= 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+};
+
+const readCookieValue = (name: string): string | null => {
+  if (typeof document === 'undefined') return null;
+  const needle = `${name}=`;
+  const parts = (document.cookie || '').split('; ').filter(Boolean);
+  for (const part of parts) {
+    if (part.startsWith(needle)) {
+      return decodeURIComponent(part.slice(needle.length));
+    }
+  }
+  return null;
+};
+
+const setCookieValue = (name: string, value: string, days: number): void => {
+  if (typeof document === 'undefined') return;
+  const maxAge = Math.max(0, Math.floor(days * 24 * 60 * 60));
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=${WHATSAPP_COOKIE_PATH}; SameSite=Lax${secure}`;
+};
+
+const deleteCookieValue = (name: string): void => {
+  if (typeof document === 'undefined') return;
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=; Max-Age=0; Path=${WHATSAPP_COOKIE_PATH}; SameSite=Lax${secure}`;
+};
+
+const loadWhatsAppProfileFromCookie = (): WhatsAppProfile | null => {
+  if (typeof window === 'undefined') return null;
+  const raw = readCookieValue(WHATSAPP_PROFILE_COOKIE_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<WhatsAppProfile>;
+    const numero = typeof parsed.numero === 'string' ? normalizeBrazilWhatsAppNumber(parsed.numero) : '';
+    if (!numero) return null;
+    const verifiedAt = typeof parsed.verifiedAt === 'number' ? parsed.verifiedAt : Date.now();
+    return { numero, verifiedAt };
+  } catch {
+    return null;
+  }
+};
+
+type StatusAlertState = {
+  alertSince: number | null;
+  notifiedAt: number | null;
+  lastAttemptAt: number | null;
+};
+
+type StatusAlertStateMap = Record<StatusTotalOption, StatusAlertState>;
+
+const buildDefaultStatusAlertStateMap = (): StatusAlertStateMap =>
+  STATUS_TOTALS.reduce<StatusAlertStateMap>((acc, status) => {
+    acc[status] = { alertSince: null, notifiedAt: null, lastAttemptAt: null };
+    return acc;
+  }, {} as StatusAlertStateMap);
+
+const loadStatusAlertStateFromStorage = (): StatusAlertStateMap => {
+  if (typeof window === 'undefined') return buildDefaultStatusAlertStateMap();
+  try {
+    const raw = window.localStorage.getItem(STATUS_ALERT_STATE_STORAGE_KEY);
+    if (!raw) return buildDefaultStatusAlertStateMap();
+    const parsed = JSON.parse(raw) as Partial<StatusAlertStateMap>;
+    const base = buildDefaultStatusAlertStateMap();
+    STATUS_TOTALS.forEach((status) => {
+      const entry = parsed?.[status];
+      if (!entry) return;
+      base[status] = {
+        alertSince: typeof entry.alertSince === 'number' ? entry.alertSince : base[status].alertSince,
+        notifiedAt: typeof entry.notifiedAt === 'number' ? entry.notifiedAt : base[status].notifiedAt,
+        lastAttemptAt: typeof entry.lastAttemptAt === 'number' ? entry.lastAttemptAt : base[status].lastAttemptAt,
+      };
+    });
+    return base;
+  } catch {
+    return buildDefaultStatusAlertStateMap();
+  }
+};
+
+const persistStatusAlertStateToStorage = (state: StatusAlertStateMap): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STATUS_ALERT_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('[FaturamentosPage] Não foi possível persistir estado de alertas', error);
+  }
+};
 
 const DEFAULT_STATUS_START_FROM: Record<StatusTotalOption, number> = {
   PENDENTE: 0,
@@ -166,14 +379,18 @@ const DEFAULT_STATUS_START_FROM: Record<StatusTotalOption, number> = {
 
 const defaultStatusConfig = (status: StatusTotalOption): StatusConfig => {
   const startFrom = DEFAULT_STATUS_START_FROM[status] ?? 0;
+  const notifyDefaults = {
+    notifyWhatsApp: false,
+    notifyAfterMinutes: DEFAULT_STATUS_NOTIFY_AFTER_MINUTES,
+  };
 
   if (['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'].includes(status)) {
-    return { alertThreshold: 0, startFrom };
+    return { alertThreshold: 0, startFrom, ...notifyDefaults };
   }
   if (['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'].includes(status)) {
-    return { alertThreshold: 20, startFrom };
+    return { alertThreshold: 20, startFrom, ...notifyDefaults };
   }
-  return { alertThreshold: 0, startFrom };
+  return { alertThreshold: 0, startFrom, ...notifyDefaults };
 };
 
 const buildDefaultStatusConfigMap = (): StatusConfigMap =>
@@ -185,6 +402,16 @@ const buildDefaultStatusConfigMap = (): StatusConfigMap =>
 const clampRefreshSeconds = (value: number): number => {
   if (Number.isNaN(value)) return 30;
   return Math.min(120, Math.max(5, value));
+};
+
+const clampInt = (value: number, min: number, max: number): number => {
+  const coerced = Number.isFinite(value) ? Math.trunc(value) : min;
+  return Math.min(max, Math.max(min, coerced));
+};
+
+const clampIntOr = (value: unknown, min: number, max: number, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return clampInt(value, min, max);
 };
 
 type ParsedResponse = {
@@ -271,20 +498,10 @@ const totalStatusClasses = (
 ): string => {
   const base = 'card status-card flex flex-col items-center justify-center gap-2';
   const safeValue = typeof adjustedValue === 'number' ? adjustedValue : 0;
-
-  const warnStatuses: StatusTotalOption[] = ['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'];
-  const errorStatuses: StatusTotalOption[] = ['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'];
-
-  const isAlert = safeValue > config.alertThreshold;
+  const isAlert = status !== 'ENVIADO_SAP' && safeValue > config.alertThreshold;
   const loadingClasses = animating ? 'animate-pulse-soft totals-card-sheen' : '';
 
-  if (isAlert && errorStatuses.includes(status)) {
-    return `${base} status-card--danger ${loadingClasses}`;
-  }
-
-  if (isAlert && warnStatuses.includes(status)) {
-    return `${base} status-card--warn ${loadingClasses}`;
-  }
+  if (isAlert) return `${base} status-card--danger ${loadingClasses}`;
 
   return `${base} ${loadingClasses}`;
 };
@@ -298,12 +515,8 @@ const subtitleByStatus = (status: StatusTotalOption, config: StatusConfig): stri
 };
 
 const subtitleColor = (status: StatusTotalOption, isAlert: boolean): string => {
-  const warnStatuses: StatusTotalOption[] = ['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'];
-  const errorStatuses: StatusTotalOption[] = ['ERRO_PREFEITURA', 'ERRO_SAP', 'ERRO_PROCESSAMENTO'];
-
-  if (isAlert && errorStatuses.includes(status)) return 'text-brand-red';
-  if (isAlert && warnStatuses.includes(status)) return 'text-brand-lime';
   if (status === 'ENVIADO_SAP') return 'text-brand-lime';
+  if (isAlert) return 'text-brand-red';
   return 'text-subtle';
 };
 
@@ -601,22 +814,60 @@ const FaturamentosPage: React.FC = () => {
       const stored = window.localStorage.getItem(STATUS_CONFIG_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Partial<StatusConfigMap>;
-        const base = buildDefaultStatusConfigMap();
-        STATUS_TOTALS.forEach((status) => {
-          const conf = parsed?.[status];
-          base[status] = {
-            alertThreshold: typeof conf?.alertThreshold === 'number' ? conf.alertThreshold : base[status].alertThreshold,
-            startFrom: typeof conf?.startFrom === 'number' ? conf.startFrom : base[status].startFrom,
-          };
-        });
-        return base;
-      }
-    } catch (err) {
+	        const base = buildDefaultStatusConfigMap();
+	        STATUS_TOTALS.forEach((status) => {
+	          const conf = parsed?.[status];
+	          base[status] = {
+	            alertThreshold: clampIntOr(conf?.alertThreshold, 0, 999, base[status].alertThreshold),
+	            startFrom: clampIntOr(conf?.startFrom, 0, 9999, base[status].startFrom),
+	            notifyWhatsApp:
+	              typeof conf?.notifyWhatsApp === 'boolean' ? conf.notifyWhatsApp : base[status].notifyWhatsApp,
+	            notifyAfterMinutes: clampIntOr(
+	              conf?.notifyAfterMinutes,
+	              MIN_STATUS_NOTIFY_AFTER_MINUTES,
+	              MAX_STATUS_NOTIFY_AFTER_MINUTES,
+	              base[status].notifyAfterMinutes
+	            ),
+	          };
+	        });
+	        return base;
+	      }
+	    } catch (err) {
       console.warn('[FaturamentosPage] Falha ao restaurar configurações', err);
     }
     return buildDefaultStatusConfigMap();
   });
+  const [whatsAppProfile, setWhatsAppProfile] = useState<WhatsAppProfile | null>(() =>
+    typeof window === 'undefined' ? null : loadWhatsAppProfileFromCookie()
+  );
+	  const [whatsVerification, setWhatsVerification] = useState<WhatsAppVerificationState | null>(() => {
+	    if (typeof window === 'undefined') return null;
+	    try {
+	      const raw = window.localStorage.getItem(WHATSAPP_VERIFICATION_STORAGE_KEY);
+	      if (!raw) return null;
+	      const parsed = JSON.parse(raw) as Partial<WhatsAppVerificationState>;
+	      const numero = typeof parsed.numero === 'string' ? normalizeBrazilWhatsAppNumber(parsed.numero) : '';
+	      const code = typeof parsed.code === 'string' ? normalizeDigits(parsed.code).slice(0, 3) : '';
+	      const sentAt = typeof parsed.sentAt === 'number' ? parsed.sentAt : 0;
+	      const expiresAt = typeof parsed.expiresAt === 'number' ? parsed.expiresAt : 0;
+	      if (!numero || !code || !sentAt || !expiresAt) return null;
+	      if (expiresAt < Date.now()) return null;
+	      return { numero, code, sentAt, expiresAt };
+	    } catch {
+	      return null;
+	    }
+	  });
+  const [whatsNumberDraft, setWhatsNumberDraft] = useState<string>('');
+  const [whatsCodeDraft, setWhatsCodeDraft] = useState<string>('');
+  const [whatsChannel, setWhatsChannel] = useState<NotificationChannel>('whatsapp');
+  const [whatsLoading, setWhatsLoading] = useState(false);
+  const [whatsError, setWhatsError] = useState<string | null>(null);
+  const [whatsSuccess, setWhatsSuccess] = useState<string | null>(null);
+  const [whatsCooldownSeconds, setWhatsCooldownSeconds] = useState<number>(0);
+  const whatsCooldownTimerRef = useRef<number | null>(null);
+
   const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [topBarVisible, setTopBarVisible] = useState<boolean>(false);
   const [sessionValidateLoading, setSessionValidateLoading] = useState(false);
   const [sessionValidateResult, setSessionValidateResult] = useState<
@@ -649,6 +900,7 @@ const FaturamentosPage: React.FC = () => {
   });
 
   const hasFetchedInitially = useRef(false);
+  const statusAlertStateRef = useRef<StatusAlertStateMap>(loadStatusAlertStateFromStorage());
   const restoreStatusNoticeTimeoutRef = useRef<number | null>(null);
   const [statusDefaultsRestored, setStatusDefaultsRestored] = useState(false);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -703,6 +955,19 @@ const FaturamentosPage: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    try {
+      if (!whatsVerification) {
+        window.localStorage.removeItem(WHATSAPP_VERIFICATION_STORAGE_KEY);
+        return;
+      }
+      window.localStorage.setItem(WHATSAPP_VERIFICATION_STORAGE_KEY, JSON.stringify(whatsVerification));
+    } catch (error) {
+      console.warn('[FaturamentosPage] Não foi possível persistir verificação WhatsApp', error);
+    }
+  }, [whatsVerification]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     window.localStorage.setItem(
       TOTALS_REFRESH_STORAGE_KEY,
       JSON.stringify({ enabled: autoRefreshEnabled, seconds: autoRefreshSeconds })
@@ -739,7 +1004,7 @@ const FaturamentosPage: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!showSettings) return;
+    if (!showSettings && !showNotifications) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -747,6 +1012,7 @@ const FaturamentosPage: React.FC = () => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowSettings(false);
+        setShowNotifications(false);
       }
     };
 
@@ -755,7 +1021,46 @@ const FaturamentosPage: React.FC = () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showSettings]);
+  }, [showNotifications, showSettings]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!showNotifications) {
+      setWhatsCooldownSeconds(0);
+      if (whatsCooldownTimerRef.current) {
+        window.clearInterval(whatsCooldownTimerRef.current);
+        whatsCooldownTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (!whatsVerification) {
+      setWhatsCooldownSeconds(0);
+      if (whatsCooldownTimerRef.current) {
+        window.clearInterval(whatsCooldownTimerRef.current);
+        whatsCooldownTimerRef.current = null;
+      }
+      return;
+    }
+
+    const updateCooldown = () => {
+      const remaining = Math.ceil((whatsVerification.sentAt + WHATSAPP_CODE_COOLDOWN_MS - Date.now()) / 1000);
+      setWhatsCooldownSeconds(Math.max(0, remaining));
+    };
+
+    updateCooldown();
+    if (whatsCooldownTimerRef.current) {
+      window.clearInterval(whatsCooldownTimerRef.current);
+    }
+    whatsCooldownTimerRef.current = window.setInterval(updateCooldown, 1000);
+
+    return () => {
+      if (whatsCooldownTimerRef.current) {
+        window.clearInterval(whatsCooldownTimerRef.current);
+        whatsCooldownTimerRef.current = null;
+      }
+    };
+  }, [showNotifications, whatsVerification, whatsCooldownTimerRef]);
 
   const fetchData = useCallback(
     async (override?: {
@@ -836,6 +1141,175 @@ const FaturamentosPage: React.FC = () => {
     [activeInterval, activeStatus, isAuthenticated]
   );
 
+	  const sendWhatsAppMessage = useCallback(async (numero: string, message: string) => {
+	    const normalized = normalizeBrazilWhatsAppNumber(numero);
+	    if (!normalized) {
+	      throw new Error('Número de WhatsApp inválido.');
+	    }
+
+    const url = new URL(WEBHOOK_URL);
+    url.searchParams.set('resource', 'notify-whats');
+    url.searchParams.set('numero', normalized);
+    url.searchParams.set('message', message);
+
+    const response = await fetch(url.toString(), {
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Falha ao enviar WhatsApp (status ${response.status}).`);
+    }
+
+    try {
+      await response.text();
+    } catch {
+      // ignore
+    }
+  }, []);
+
+	  const sendWhatsAppValidationCode = useCallback(async (numero: string, codigo: string) => {
+	    const normalized = normalizeBrazilWhatsAppNumber(numero);
+	    const normalizedCode = normalizeDigits(codigo).slice(0, 3);
+	    if (!normalized) {
+	      throw new Error('Número de WhatsApp inválido.');
+	    }
+    if (!normalizedCode || normalizedCode.length !== 3) {
+      throw new Error('Código inválido.');
+    }
+
+    const url = new URL(WEBHOOK_URL);
+    url.searchParams.set('resource', 'whats-validate-number');
+    url.searchParams.set('numero', normalized);
+    url.searchParams.set('codigo', normalizedCode);
+
+    const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    if (!response.ok) {
+      throw new Error(`Falha ao enviar código (status ${response.status}).`);
+    }
+
+    let data: unknown = null;
+    try {
+      data = await response.json();
+    } catch {
+      try {
+        data = await response.text();
+      } catch {
+        data = null;
+      }
+    }
+
+    if (data && typeof data === 'object') {
+      const asObj = data as { ok?: unknown; valido?: unknown; mensagem?: unknown; reason?: unknown };
+      if (asObj.ok === false) {
+        throw new Error(typeof asObj.reason === 'string' ? asObj.reason : 'Não foi possível enviar o código.');
+      }
+      if (asObj.valido === false) {
+        throw new Error(typeof asObj.mensagem === 'string' ? asObj.mensagem : 'Não foi possível enviar o código.');
+      }
+    }
+
+    return data;
+  }, []);
+
+  const maybeTriggerWhatsAppAlerts = useCallback(
+    async (nextTotals: StatusTotalsMap) => {
+      if (!whatsAppProfile?.numero) return;
+
+      const now = Date.now();
+      const currentState = statusAlertStateRef.current ?? buildDefaultStatusAlertStateMap();
+      const nextState: StatusAlertStateMap = { ...currentState };
+      const triggers: Array<{
+        status: StatusTotalOption;
+        displayed: number;
+        threshold: number;
+        elapsedMs: number;
+      }> = [];
+
+      STATUS_TOTALS.forEach((status) => {
+        const config = statusConfig[status] ?? defaultStatusConfig(status);
+        const displayed = computeDisplayTotal(nextTotals[status], config);
+        const isAlert = displayed !== null && displayed > config.alertThreshold;
+        const prev = currentState[status] ?? { alertSince: null, notifiedAt: null, lastAttemptAt: null };
+
+        if (!isAlert) {
+          nextState[status] = { alertSince: null, notifiedAt: null, lastAttemptAt: null };
+          return;
+        }
+
+        const justEntered = prev.alertSince === null;
+        const alertSince = prev.alertSince ?? now;
+        const notifiedAt = justEntered ? null : prev.notifiedAt;
+        const lastAttemptAt = justEntered ? null : prev.lastAttemptAt;
+
+        const waitMinutes = clampInt(
+          typeof config.notifyAfterMinutes === 'number' && Number.isFinite(config.notifyAfterMinutes)
+            ? config.notifyAfterMinutes
+            : DEFAULT_STATUS_NOTIFY_AFTER_MINUTES,
+          MIN_STATUS_NOTIFY_AFTER_MINUTES,
+          MAX_STATUS_NOTIFY_AFTER_MINUTES
+        );
+        const waitMs = waitMinutes * 60_000;
+        const elapsedMs = now - alertSince;
+
+        const alreadyNotified = notifiedAt !== null;
+        const throttled = lastAttemptAt !== null && now - lastAttemptAt < 60_000;
+        const shouldNotify =
+          Boolean(config.notifyWhatsApp) && !alreadyNotified && !throttled && elapsedMs >= waitMs;
+
+        if (shouldNotify) {
+          triggers.push({
+            status,
+            displayed: typeof displayed === 'number' ? displayed : 0,
+            threshold: config.alertThreshold,
+            elapsedMs,
+          });
+          nextState[status] = { alertSince, notifiedAt, lastAttemptAt: now };
+          return;
+        }
+
+        nextState[status] = { alertSince, notifiedAt, lastAttemptAt };
+      });
+
+      statusAlertStateRef.current = nextState;
+      persistStatusAlertStateToStorage(nextState);
+
+      if (triggers.length === 0) return;
+
+      const panelUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/faturamentos`
+          : 'notify.autevia.com.br/faturamentos';
+
+      const messageLines = [
+        'Monitor NFSe Porto Itapoá',
+        'Alerta de status',
+        '',
+        ...triggers.map(
+          (item) =>
+            `• ${item.status.replace(/_/g, ' ')}: ${formatInt(item.displayed)} (limiar ${
+              item.threshold
+            }) há ${formatDurationShort(item.elapsedMs)}`
+        ),
+        '',
+        `Painel: ${panelUrl}`,
+      ];
+
+      try {
+        await sendWhatsAppMessage(whatsAppProfile.numero, messageLines.join('\n'));
+        const sentAt = Date.now();
+        triggers.forEach((item) => {
+          const prev = nextState[item.status] ?? { alertSince: null, notifiedAt: null, lastAttemptAt: null };
+          nextState[item.status] = { ...prev, notifiedAt: sentAt };
+        });
+        statusAlertStateRef.current = nextState;
+        persistStatusAlertStateToStorage(nextState);
+      } catch (error) {
+        console.warn('[FaturamentosPage] Falha ao enviar alerta WhatsApp', error);
+      }
+    },
+    [sendWhatsAppMessage, statusConfig, whatsAppProfile?.numero]
+  );
+
   const fetchTotals = useCallback(async () => {
     if (!isAuthenticated) return;
     setTotalsLoading(true);
@@ -870,6 +1344,7 @@ const FaturamentosPage: React.FC = () => {
         STATUS_TOTALS.reduce((acc, status) => ({ ...acc, [status]: null }), {} as StatusTotalsMap)
       );
       setTotals(nextTotals);
+      void maybeTriggerWhatsAppAlerts(nextTotals);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao carregar totais por status.';
       setTotalsError(message);
@@ -880,7 +1355,7 @@ const FaturamentosPage: React.FC = () => {
         totalsAnimationTimeoutRef.current = null;
       }, 900);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, maybeTriggerWhatsAppAlerts]);
 
   useEffect(() => {
     if (!autoRefreshEnabled || !isAuthenticated) return;
@@ -1043,16 +1518,48 @@ const FaturamentosPage: React.FC = () => {
     setSortOption(event.target.value as SortOption);
   };
 
+  type NumericStatusConfigField = 'alertThreshold' | 'startFrom' | 'notifyAfterMinutes';
+
   const handleStatusConfigChange = (
     status: StatusTotalOption,
-    field: keyof StatusConfig,
+    field: NumericStatusConfigField,
     value: number
   ) => {
+    setStatusConfig((prev) => {
+      const current = prev[status] ?? defaultStatusConfig(status);
+      if (!Number.isFinite(value)) {
+        return prev;
+      }
+
+      const nextValue = (() => {
+        if (field === 'alertThreshold') return clampInt(value, 0, 999);
+        if (field === 'startFrom') return clampInt(value, 0, 9999);
+        return clampInt(value, MIN_STATUS_NOTIFY_AFTER_MINUTES, MAX_STATUS_NOTIFY_AFTER_MINUTES);
+      })();
+      return {
+        ...prev,
+        [status]: {
+          ...current,
+          [field]: nextValue,
+        },
+      };
+    });
+  };
+
+  const handleStatusNotifyWhatsAppChange = (status: StatusTotalOption, next: boolean) => {
     setStatusConfig((prev) => ({
       ...prev,
       [status]: {
         ...prev[status],
-        [field]: Number.isFinite(value) && value >= 0 ? value : prev[status][field],
+        notifyWhatsApp: next,
+        notifyAfterMinutes:
+          clampInt(
+            typeof prev[status]?.notifyAfterMinutes === 'number'
+              ? prev[status].notifyAfterMinutes
+              : DEFAULT_STATUS_NOTIFY_AFTER_MINUTES,
+            MIN_STATUS_NOTIFY_AFTER_MINUTES,
+            MAX_STATUS_NOTIFY_AFTER_MINUTES
+          ),
       },
     }));
   };
@@ -1069,6 +1576,148 @@ const FaturamentosPage: React.FC = () => {
       setStatusDefaultsRestored(false);
       restoreStatusNoticeTimeoutRef.current = null;
     }, 2200);
+  };
+
+  const handleOpenSettings = () => {
+    setShowNotifications(false);
+    setShowSettings(true);
+  };
+
+  const handleOpenNotifications = () => {
+    setShowSettings(false);
+    setShowNotifications(true);
+    setWhatsChannel('whatsapp');
+    setWhatsError(null);
+    setWhatsSuccess(null);
+    setWhatsCodeDraft('');
+    setWhatsNumberDraft((prev) => formatBrazilPhoneMask(prev || whatsVerification?.numero || whatsAppProfile?.numero || ''));
+  };
+
+  const handleCloseModals = () => {
+    setShowSettings(false);
+    setShowNotifications(false);
+  };
+
+  const handleSendWhatsAppCode = async () => {
+    if (whatsLoading) return;
+    if (whatsCooldownSeconds > 0) return;
+
+    setWhatsError(null);
+    setWhatsSuccess(null);
+
+    const numero = normalizeBrazilWhatsAppNumber(whatsNumberDraft);
+    if (!numero) {
+      setWhatsError('Informe um número completo com DDD + número (DDI 55 é automático). Ex.: (47)9 9905-4093');
+      return;
+    }
+
+    setWhatsLoading(true);
+    const code = String(100 + Math.floor(Math.random() * 900));
+    const now = Date.now();
+
+    const verification: WhatsAppVerificationState = {
+      numero,
+      code,
+      sentAt: now,
+      expiresAt: now + WHATSAPP_CODE_TTL_MS,
+    };
+
+    try {
+      await sendWhatsAppValidationCode(numero, code);
+      setWhatsVerification(verification);
+      setWhatsCodeDraft('');
+      setWhatsSuccess('Código enviado. Verifique seu WhatsApp e confirme abaixo.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao enviar código via WhatsApp.';
+      setWhatsError(message);
+    } finally {
+      setWhatsLoading(false);
+    }
+  };
+
+  const handleVerifyWhatsAppCode = () => {
+    setWhatsError(null);
+    setWhatsSuccess(null);
+
+    if (!whatsVerification) {
+      setWhatsError('Solicite um código antes de validar.');
+      return;
+    }
+
+    if (whatsVerification.expiresAt < Date.now()) {
+      setWhatsError('Seu código expirou. Solicite um novo código.');
+      setWhatsVerification(null);
+      setWhatsCodeDraft('');
+      return;
+    }
+
+    const candidate = normalizeDigits(whatsCodeDraft).slice(0, 3);
+    if (candidate.length !== 3) {
+      setWhatsError('Digite os 3 dígitos do código.');
+      return;
+    }
+
+    if (candidate !== whatsVerification.code) {
+      setWhatsError('Código inválido: ele não bate com o código enviado. Confira e tente novamente, ou reenvie o código.');
+      setWhatsCodeDraft('');
+      return;
+    }
+
+    const profile: WhatsAppProfile = {
+      numero: whatsVerification.numero,
+      verifiedAt: Date.now(),
+    };
+
+    setCookieValue(WHATSAPP_PROFILE_COOKIE_KEY, JSON.stringify(profile), WHATSAPP_PROFILE_COOKIE_DAYS);
+    setWhatsAppProfile(profile);
+    setWhatsVerification(null);
+    setWhatsCodeDraft('');
+    setWhatsSuccess('WhatsApp confirmado e salvo neste navegador.');
+  };
+
+  const handleEditWhatsAppPendingNumber = () => {
+    setWhatsVerification(null);
+    setWhatsCodeDraft('');
+    setWhatsError(null);
+    setWhatsSuccess(null);
+  };
+
+  const handleClearWhatsAppProfile = () => {
+    deleteCookieValue(WHATSAPP_PROFILE_COOKIE_KEY);
+    setWhatsAppProfile(null);
+    setWhatsVerification(null);
+    setWhatsNumberDraft('');
+    setWhatsCodeDraft('');
+    setWhatsError(null);
+    setWhatsSuccess('Configuração de WhatsApp removida.');
+  };
+
+	  const handleEditWhatsAppProfile = () => {
+	    const current = whatsAppProfile?.numero ?? '';
+	    deleteCookieValue(WHATSAPP_PROFILE_COOKIE_KEY);
+	    setWhatsAppProfile(null);
+	    setWhatsVerification(null);
+	    setWhatsNumberDraft(formatBrazilPhoneMask(current));
+	    setWhatsCodeDraft('');
+	    setWhatsError(null);
+	    setWhatsSuccess(null);
+	  };
+
+  const handleSendWhatsAppTest = async () => {
+    if (whatsLoading) return;
+    if (!whatsAppProfile?.numero) return;
+    setWhatsError(null);
+    setWhatsSuccess(null);
+    setWhatsLoading(true);
+    try {
+      await sendWhatsAppMessage(whatsAppProfile.numero, 'Monitor NFSe Porto Itapoá\n\nMensagem de teste enviada com sucesso.');
+      setWhatsSuccess('Mensagem de teste enviada.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao enviar mensagem de teste.';
+      setWhatsError(message);
+    } finally {
+      setWhatsLoading(false);
+    }
   };
 
   const handleAutoRefreshSecondsChange = (value: number) => {
@@ -1363,11 +2012,19 @@ const FaturamentosPage: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowSettings(true)}
+                  onClick={handleOpenSettings}
                   className="icon-btn"
                   aria-label="Abrir configurações"
                 >
                   <GearIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenNotifications}
+                  className="icon-btn"
+                  aria-label="Abrir notificações"
+                >
+                  <BellIcon className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -1394,14 +2051,24 @@ const FaturamentosPage: React.FC = () => {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="btn btn-ghost inline-flex items-center gap-2 self-start text-sm"
-            >
-              <GearIcon className="h-4 w-4" />
-              Configurações
-            </button>
+            <div className="flex flex-col gap-2 self-start sm:flex-row sm:items-center">
+              <button
+                type="button"
+                onClick={handleOpenNotifications}
+                className="btn btn-ghost inline-flex items-center gap-2 text-sm"
+              >
+                <BellIcon className="h-4 w-4" />
+                Notificações
+              </button>
+              <button
+                type="button"
+                onClick={handleOpenSettings}
+                className="btn btn-ghost inline-flex items-center gap-2 text-sm"
+              >
+                <GearIcon className="h-4 w-4" />
+                Configurações
+              </button>
+            </div>
           </div>
 
           <section className="surface p-4">
@@ -1468,10 +2135,10 @@ const FaturamentosPage: React.FC = () => {
 
                 {totalsDetailsOpen && (
                   <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {STATUS_TOTALS.map((status) => {
-                      const config = statusConfig[status] ?? defaultStatusConfig(status);
-                      const displayed = totalsDisplayedByStatus[status];
-                      const isAlert = displayed !== null && displayed > config.alertThreshold;
+	                    {STATUS_TOTALS.map((status) => {
+	                      const config = statusConfig[status] ?? defaultStatusConfig(status);
+	                      const displayed = totalsDisplayedByStatus[status];
+	                      const isAlert = status !== 'ENVIADO_SAP' && displayed !== null && displayed > config.alertThreshold;
 
                       return (
                         <div
@@ -1496,10 +2163,10 @@ const FaturamentosPage: React.FC = () => {
             </div>
 
             <div className="hidden md:grid md:grid-cols-3 md:gap-4 lg:grid-cols-4 xl:grid-cols-7">
-              {STATUS_TOTALS.map((status) => {
-                const config = statusConfig[status] ?? defaultStatusConfig(status);
-                const displayed = totalsDisplayedByStatus[status];
-                const isAlert = displayed !== null && displayed > config.alertThreshold;
+	              {STATUS_TOTALS.map((status) => {
+	                const config = statusConfig[status] ?? defaultStatusConfig(status);
+	                const displayed = totalsDisplayedByStatus[status];
+	                const isAlert = status !== 'ENVIADO_SAP' && displayed !== null && displayed > config.alertThreshold;
 
                 return (
                   <div
@@ -1858,15 +2525,276 @@ const FaturamentosPage: React.FC = () => {
         </section>
       </main>
 
+      {showNotifications && (
+        <div
+          className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur md:items-center md:justify-center"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={handleCloseModals}
+        >
+          <div
+            className="surface surface-sheet flex w-full max-h-[92vh] flex-col overflow-hidden sm:mx-4 md:max-w-5xl lg:max-w-6xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-[rgba(255,255,255,0.06)] bg-[rgba(5,7,20,0.35)] px-4 pb-4 pt-4 backdrop-blur sm:px-6 sm:pt-6">
+              <div className="mx-auto mb-3 h-1 w-12 rounded-full bg-[rgba(255,255,255,0.14)] md:hidden" />
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Painel</p>
+                  <h2 className="text-2xl font-semibold text-white">Notificações</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseModals}
+                  className="btn btn-ghost text-sm"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 pb-[calc(18px+env(safe-area-inset-bottom))] pt-5 sm:px-6">
+              <div className="grid gap-6 lg:grid-cols-2 lg:items-stretch">
+                <section className="card card-ring space-y-4 p-4">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Canais</p>
+                    <p className="text-sm text-muted">Escolha como receber alertas.</p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      disabled
+                      className="card card-ring w-full cursor-not-allowed p-4 text-left opacity-60"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">E-mail</p>
+                          <p className="mt-1 text-xs text-muted">Em desenvolvimento</p>
+                        </div>
+                        <span className="badge badge-soft">Bloqueado</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled
+                      className="card card-ring w-full cursor-not-allowed p-4 text-left opacity-60"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">Push notification (somente smartphone)</p>
+                          <p className="mt-1 text-xs text-muted">Em desenvolvimento</p>
+                        </div>
+                        <span className="badge badge-soft">Bloqueado</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setWhatsChannel('whatsapp')}
+                      className={`card card-ring w-full p-4 text-left transition ${
+                        whatsChannel === 'whatsapp' ? 'card-ring--active' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">WhatsApp</p>
+                          <p className="mt-1 text-xs text-muted">Alertas de status no seu número validado.</p>
+                        </div>
+                        <span className="badge badge-soft">Ativo</span>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="card card-ring bg-[rgba(255,255,255,0.02)] px-4 py-3 text-xs text-muted">
+                    Dica: para disparar alertas automaticamente, mantenha o painel aberto com <strong>Auto refresh</strong>{' '}
+                    ligado.
+                  </div>
+                </section>
+
+                <section className="card card-ring space-y-4 p-4">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">WhatsApp</p>
+                    <p className="text-sm text-muted">Valide seu número para receber alertas.</p>
+                  </div>
+
+                  {whatsError && (
+                    <div className="card card-ring bg-[rgba(224,32,32,0.10)] px-4 py-3 text-xs text-white">
+                      <p className="font-semibold text-brand-red">Erro</p>
+                      <p className="mt-1 text-muted">{whatsError}</p>
+                    </div>
+                  )}
+
+                  {whatsSuccess && (
+                    <div className="card card-ring bg-[rgba(0,112,80,0.10)] px-4 py-3 text-xs text-white">
+                      <p className="font-semibold text-brand-lime">Ok</p>
+                      <p className="mt-1 text-muted">{whatsSuccess}</p>
+                    </div>
+                  )}
+
+                  {whatsAppProfile?.numero ? (
+                    <div className="space-y-3">
+                      <div className="card card-ring px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+                          Número validado
+                        </p>
+                        <p className="mt-2 text-lg font-semibold text-white">
+                          {formatBrazilWhatsAppDisplay(whatsAppProfile.numero)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted">
+                          Validado em {formatDateTime(new Date(whatsAppProfile.verifiedAt).toISOString(), '—')}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <button
+                          type="button"
+                          onClick={handleSendWhatsAppTest}
+                          disabled={whatsLoading}
+                          className="btn btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {whatsLoading ? 'Enviando...' : 'Enviar teste'}
+                        </button>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <button
+                            type="button"
+                            onClick={handleEditWhatsAppProfile}
+                            className="btn btn-ghost text-sm"
+                          >
+                            Alterar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleClearWhatsAppProfile}
+                            className="btn btn-ghost text-sm"
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="card card-ring space-y-3 p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+                          1) Enviar código
+                        </p>
+
+                        <label className="space-y-1 text-xs text-muted">
+                          <span>Número do WhatsApp (DDD + número)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            placeholder="(47)9 9905-4093"
+                            value={whatsNumberDraft}
+                            onChange={(e) => setWhatsNumberDraft(formatBrazilPhoneMask(e.target.value))}
+                            disabled={whatsLoading || Boolean(whatsVerification)}
+                            className="input-field input-field-rect text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                          />
+                        </label>
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <button
+                            type="button"
+                            onClick={handleSendWhatsAppCode}
+                            disabled={whatsLoading || whatsCooldownSeconds > 0}
+                            className="btn btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {whatsLoading
+                              ? 'Enviando...'
+                              : whatsCooldownSeconds > 0
+                              ? `Reenviar em ${whatsCooldownSeconds}s`
+                              : 'Enviar código'}
+                          </button>
+
+                          {whatsVerification && (
+                            <button
+                              type="button"
+                              onClick={handleEditWhatsAppPendingNumber}
+                              disabled={whatsLoading}
+                              className="btn btn-ghost text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Alterar número
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {whatsVerification && (
+                        <div className="card card-ring space-y-3 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+                            2) Confirmar código
+                          </p>
+                          <p className="text-xs text-muted">
+                            Digite os 3 dígitos enviados para{' '}
+                            <span className="text-white">{formatBrazilWhatsAppDisplay(whatsVerification.numero)}</span>.
+                          </p>
+
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              placeholder="123"
+                              value={whatsCodeDraft}
+                              onChange={(e) => setWhatsCodeDraft(normalizeDigits(e.target.value).slice(0, 3))}
+                              className="input-field input-field-rect text-sm sm:max-w-[120px]"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleVerifyWhatsAppCode}
+                              className="btn btn-ghost text-sm"
+                            >
+                              Validar
+                            </button>
+                          </div>
+
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                              <button
+                                type="button"
+                                onClick={handleSendWhatsAppCode}
+                                disabled={whatsLoading || whatsCooldownSeconds > 0}
+                                className="btn btn-ghost text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {whatsCooldownSeconds > 0 ? `Reenviar em ${whatsCooldownSeconds}s` : 'Reenviar código'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleEditWhatsAppPendingNumber}
+                                disabled={whatsLoading}
+                                className="btn btn-ghost text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Alterar número
+                              </button>
+                            </div>
+
+                            <span className="text-[11px] text-subtle">
+                              Expira em {formatDurationShort(Math.max(0, whatsVerification.expiresAt - Date.now()))}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div
           className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur md:items-center md:justify-center"
           role="dialog"
           aria-modal="true"
-          onMouseDown={() => setShowSettings(false)}
+          onMouseDown={handleCloseModals}
         >
           <div
-            className="surface surface-sheet flex w-full max-h-[92vh] flex-col overflow-hidden sm:mx-4 md:max-w-4xl"
+            className="surface surface-sheet flex w-full max-h-[92vh] flex-col overflow-hidden sm:mx-4 md:max-w-5xl lg:max-w-6xl"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="border-b border-[rgba(255,255,255,0.06)] bg-[rgba(5,7,20,0.35)] px-4 pb-4 pt-4 backdrop-blur sm:px-6 sm:pt-6">
@@ -1878,85 +2806,210 @@ const FaturamentosPage: React.FC = () => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowSettings(false)}
+                  onClick={handleCloseModals}
                   className="btn btn-ghost text-sm"
                 >
                   Fechar
                 </button>
               </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-4 pb-[calc(18px+env(safe-area-inset-bottom))] pt-5 sm:px-6">
-              <div className="grid gap-6 lg:grid-cols-2 lg:items-stretch">
-              <section className="card card-ring space-y-4 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
-                        Alertas por status
-                      </p>
-                      <p className="text-sm text-muted">Defina limiar e início de contagem.</p>
-                    </div>
-                    <div className="flex items-center gap-3 sm:justify-end">
-                      {statusDefaultsRestored && (
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-brand-lime">
-                          Padrões restaurados
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={handleRestoreStatusDefaults}
-                        className="btn btn-ghost whitespace-nowrap text-xs"
-                      >
-                        Restaurar padrão
+	            </div>
+	
+	            <div className="flex-1 overflow-y-auto px-4 pb-[calc(18px+env(safe-area-inset-bottom))] pt-5 sm:px-6">
+	              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] lg:items-stretch">
+	                <section className="card card-ring space-y-4 p-4">
+	                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+	                    <div>
+	                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+	                        Alertas por status
+	                      </p>
+	                      <p className="text-sm text-muted">
+	                        Defina limiar, início, notificações e tempo em alerta (5–360 min).
+	                      </p>
+	                    </div>
+	                    <div className="flex items-center gap-3 sm:justify-end">
+	                      {statusDefaultsRestored && (
+	                        <span className="text-[10px] font-semibold uppercase tracking-[0.28em] text-brand-lime">
+	                          Padrões restaurados
+	                        </span>
+	                      )}
+	                      <button
+	                        type="button"
+	                        onClick={handleRestoreStatusDefaults}
+	                        className="btn btn-ghost whitespace-nowrap text-xs"
+	                      >
+	                        Restaurar padrão
+	                      </button>
+	                    </div>
+	                  </div>
+	                  {!whatsAppProfile?.numero && (
+	                    <div className="card card-ring bg-[rgba(255,255,255,0.02)] px-4 py-3 text-xs text-muted">
+	                      Para habilitar alertas por WhatsApp, valide seu número em{' '}
+	                      <button type="button" onClick={handleOpenNotifications} className="underline underline-offset-4">
+                        Notificações
                       </button>
-                    </div>
-                  </div>
-                  <div className="space-y-3 md:max-h-[360px] md:overflow-auto md:pr-1">
-                    {STATUS_TOTALS.map((status) => {
-                      const conf = statusConfig[status] ?? defaultStatusConfig(status);
-                      return (
-                        <div
-                          key={status}
-                          className="card card-ring p-3"
-                        >
-                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
-                            {status.replace(/_/g, ' ')}
-                          </p>
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <label className="space-y-1 text-xs text-muted">
-                              <span>Alerta &gt;</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={conf.alertThreshold}
-                                onChange={(e) =>
-                                  handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
-                                }
-                                className="input-field input-field-rect text-sm"
-                              />
-                            </label>
-                            <label className="space-y-1 text-xs text-muted">
-                              <span>Início de contagem</span>
-                              <input
-                                type="number"
-                                min={0}
-                                value={conf.startFrom}
-                                onChange={(e) => handleStatusConfigChange(status, 'startFrom', Number(e.target.value))}
-                                className="input-field input-field-rect text-sm"
-                              />
-                            </label>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-
-              <section className="card card-ring space-y-4 p-4 lg:row-span-2 lg:h-full lg:flex lg:flex-col">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Token de sessão</p>
-                    <p className="text-sm text-muted">Validar e atualizar PHPSESSID.</p>
+	                      .
+	                    </div>
+	                  )}
+	
+	                  <div className="hidden sm:grid sm:grid-cols-[minmax(0,1fr)_72px_84px_92px_84px] sm:gap-3 sm:px-2">
+	                    <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">Status</span>
+	                    <span className="text-center text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                      Alerta &gt;
+	                    </span>
+	                    <span className="text-center text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                      Início
+	                    </span>
+	                    <span className="text-center text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                      Notificar
+	                    </span>
+	                    <span className="text-center text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                      Tempo (min)
+	                    </span>
+	                  </div>
+	
+	                  <div className="space-y-3">
+	                    {STATUS_TOTALS.map((status) => {
+	                      const conf = statusConfig[status] ?? defaultStatusConfig(status);
+                      const whatsappLocked = !whatsAppProfile?.numero;
+                      const notifyDisabled = whatsappLocked;
+	                      const timeDisabled = whatsappLocked || !conf.notifyWhatsApp;
+	
+	                      return (
+	                        <div key={status} className="card card-ring p-3">
+	                          <div className="sm:hidden">
+	                            <div className="flex items-center justify-between gap-3">
+	                              <div className="min-w-0">
+	                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
+	                                  {status.replace(/_/g, ' ')}
+	                                </p>
+	                              </div>
+	                              <div className="flex items-center gap-3">
+	                                <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                                  Notificar
+	                                </span>
+	                                <SwitchButton
+	                                  checked={Boolean(conf.notifyWhatsApp)}
+	                                  disabled={notifyDisabled}
+	                                  onToggle={() => handleStatusNotifyWhatsAppChange(status, !Boolean(conf.notifyWhatsApp))}
+	                                  ariaLabel={`Notificar ${status.replace(/_/g, ' ')}`}
+	                                />
+	                              </div>
+	                            </div>
+	
+	                            <div className="mt-3 grid grid-cols-3 gap-2">
+	                              <label className="space-y-1 text-xs text-muted">
+	                                <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                                  Alerta &gt;
+	                                </span>
+	                                <input
+	                                  type="number"
+	                                  min={0}
+	                                  max={999}
+	                                  value={conf.alertThreshold}
+	                                  onChange={(e) =>
+	                                    handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
+	                                  }
+	                                  className="input-field input-field-rect input-field-sm w-full text-center text-sm"
+	                                />
+	                              </label>
+	
+	                              <label className="space-y-1 text-xs text-muted">
+	                                <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                                  Início
+	                                </span>
+	                                <input
+	                                  type="number"
+	                                  min={0}
+	                                  max={9999}
+	                                  value={conf.startFrom}
+	                                  onChange={(e) =>
+	                                    handleStatusConfigChange(status, 'startFrom', Number(e.target.value))
+	                                  }
+	                                  className="input-field input-field-rect input-field-sm w-full text-center text-sm"
+	                                />
+	                              </label>
+	
+	                              <label className="space-y-1 text-xs text-muted">
+	                                <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+	                                  Tempo (min)
+	                                </span>
+	                                <input
+	                                  type="number"
+	                                  min={MIN_STATUS_NOTIFY_AFTER_MINUTES}
+	                                  max={MAX_STATUS_NOTIFY_AFTER_MINUTES}
+	                                  value={conf.notifyAfterMinutes}
+	                                  disabled={timeDisabled}
+	                                  onChange={(e) =>
+	                                    handleStatusConfigChange(status, 'notifyAfterMinutes', Number(e.target.value))
+	                                  }
+	                                  className="input-field input-field-rect input-field-sm w-full text-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
+	                                />
+	                              </label>
+	                            </div>
+	                          </div>
+	
+	                          <div className="hidden sm:grid sm:grid-cols-[minmax(0,1fr)_72px_84px_92px_84px] sm:items-center sm:gap-3">
+	                            <div className="min-w-0">
+	                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
+	                                {status.replace(/_/g, ' ')}
+	                              </p>
+	                            </div>
+	
+	                            <input
+	                              type="number"
+	                              min={0}
+	                              max={999}
+	                              value={conf.alertThreshold}
+	                              onChange={(e) =>
+	                                handleStatusConfigChange(status, 'alertThreshold', Number(e.target.value))
+	                              }
+	                              aria-label={`Alerta para ${status.replace(/_/g, ' ')}`}
+	                              className="input-field input-field-rect input-field-sm w-full text-center text-sm"
+	                            />
+	
+	                            <input
+	                              type="number"
+	                              min={0}
+	                              max={9999}
+	                              value={conf.startFrom}
+	                              onChange={(e) => handleStatusConfigChange(status, 'startFrom', Number(e.target.value))}
+	                              aria-label={`Início para ${status.replace(/_/g, ' ')}`}
+	                              className="input-field input-field-rect input-field-sm w-full text-center text-sm"
+	                            />
+	
+	                            <div className="flex justify-center">
+	                              <SwitchButton
+	                                checked={Boolean(conf.notifyWhatsApp)}
+	                                disabled={notifyDisabled}
+	                                onToggle={() => handleStatusNotifyWhatsAppChange(status, !Boolean(conf.notifyWhatsApp))}
+	                                ariaLabel={`Notificar ${status.replace(/_/g, ' ')}`}
+	                              />
+	                            </div>
+	
+	                            <input
+	                              type="number"
+	                              min={MIN_STATUS_NOTIFY_AFTER_MINUTES}
+	                              max={MAX_STATUS_NOTIFY_AFTER_MINUTES}
+	                              value={conf.notifyAfterMinutes}
+	                              disabled={timeDisabled}
+	                              onChange={(e) =>
+	                                handleStatusConfigChange(status, 'notifyAfterMinutes', Number(e.target.value))
+	                              }
+	                              aria-label={`Tempo em alerta para ${status.replace(/_/g, ' ')} (min)`}
+	                              className="input-field input-field-rect input-field-sm w-full text-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
+	                            />
+	                          </div>
+	                        </div>
+	                      );
+	                    })}
+	                  </div>
+	                </section>
+	
+	                <section className="card card-ring space-y-4 p-4 lg:row-span-2 lg:h-full lg:flex lg:flex-col">
+	                <div className="flex items-center justify-between">
+	                  <div>
+	                    <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Token de sessão</p>
+	                    <p className="text-sm text-muted">Validar e atualizar PHPSESSID.</p>
                   </div>
                 </div>
 
@@ -2007,33 +3060,18 @@ const FaturamentosPage: React.FC = () => {
                   </div>
                   {sessionUpdateResult && (
                     <p className="text-xs text-muted">{sessionUpdateResult.mensagem}</p>
-                  )}
-                </div>
-              </section>
+	                  )}
+	                </div>
+	              </section>
 
               <section className="card card-ring space-y-4 p-4">
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Auto refresh</p>
-                      <p className="text-sm text-muted">Atualizar totais automaticamente.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={toggleAutoRefresh}
-                      className={`relative h-[1.75rem] w-[3.1rem] rounded-full border transition ${
-                        autoRefreshEnabled
-                          ? 'border-[rgba(0,112,80,0.65)] bg-[rgba(0,112,80,0.55)]'
-                          : 'border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.06)]'
-                      }`}
-                      aria-pressed={autoRefreshEnabled}
-                    >
-                      <span
-                        className={`absolute top-[0.20rem] left-[0.20rem] h-[1.35rem] w-[1.35rem] rounded-full bg-white shadow transition ${
-                          autoRefreshEnabled ? 'translate-x-[1.35rem]' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
+	                    <div>
+	                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Auto refresh</p>
+	                      <p className="text-sm text-muted">Atualizar totais automaticamente.</p>
+	                    </div>
+	                    <SwitchButton checked={autoRefreshEnabled} onToggle={toggleAutoRefresh} ariaLabel="Auto refresh" />
+	                  </div>
 
                 <div className="space-y-2">
                   <label className="text-xs text-muted">Tempo entre refresh (segundos)</label>
