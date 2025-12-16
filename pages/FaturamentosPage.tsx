@@ -43,11 +43,16 @@ type FaturamentoResumo = {
 };
 
 const WEBHOOK_URL = 'https://n8n.autevia.com.br/webhook/fats';
+const PHPSESSID_PORTAL_URL = 'https://nfse-itapoa.atende.net/';
+const PHPSESSID_VIDEO_URL = '/assets/videos/pegar_phpsessid_web.mp4';
+const PHPSESSID_VIDEO_POSTER_URL = '/assets/videos/pegar_phpsessid_poster.webp';
+const PHPSESSID_VIDEO_LABEL = 'Como pegar o PHPSESSID (26s)';
 
 const INTERVAL_OPTIONS = ['15m', '30m', '60m', '120m', '240m'] as const;
 type IntervalOption = (typeof INTERVAL_OPTIONS)[number];
 const LIST_BATCH_SIZE = 10;
-const SESSION_VALIDATE_INTERVAL_MS = 15 * 60 * 1000;
+const SESSION_VALIDATE_DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
+const SESSION_VALIDATE_ALERT_INTERVAL_MS = 60 * 1000;
 
 const STATUS_OPTIONS = [
   'PENDENTE',
@@ -72,6 +77,17 @@ type StatusConfig = {
 };
 
 type StatusConfigMap = Record<StatusTotalOption, StatusConfig>;
+
+type SessionTokenAlertConfig = {
+  notifyWhatsApp: boolean;
+  notifyAfterMinutes: number;
+};
+
+type SessionValidateResult = {
+  valido: boolean;
+  fileId?: string;
+  mensagem?: string;
+};
 
 const SORT_OPTIONS = ['date', 'draft', 'status'] as const;
 type SortOption = (typeof SORT_OPTIONS)[number];
@@ -135,6 +151,12 @@ const RefreshIcon: React.FC<{ className?: string }> = ({ className }) => (
     <path d="M4 4v4h4" />
     <path d="M4 13a8 8 0 0 0 14.66 4" />
     <path d="M20 20v-4h-4" />
+  </svg>
+);
+
+const PlayIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+    <path d="M8.5 5.5v13l11-6.5-11-6.5z" />
   </svg>
 );
 
@@ -205,10 +227,12 @@ const formatInt = (value?: number | null): string => {
 type StatusTotalsMap = Record<StatusTotalOption, number | null>;
 
 const STATUS_CONFIG_STORAGE_KEY = 'porto_nfse_status_config';
+const SESSION_ALERT_CONFIG_STORAGE_KEY = 'porto_nfse_session_alert_config';
 const TOTALS_REFRESH_STORAGE_KEY = 'porto_nfse_totals_refresh';
 const WHATSAPP_PROFILE_COOKIE_KEY = 'porto_nfse_whatsapp_profile';
 const WHATSAPP_VERIFICATION_STORAGE_KEY = 'porto_nfse_whatsapp_verification';
 const STATUS_ALERT_STATE_STORAGE_KEY = 'porto_nfse_status_alert_state';
+const SESSION_ALERT_STATE_STORAGE_KEY = 'porto_nfse_session_alert_state';
 
 const WHATSAPP_PROFILE_COOKIE_DAYS = 90;
 const WHATSAPP_CODE_TTL_MS = 1000 * 60 * 5;
@@ -216,6 +240,9 @@ const WHATSAPP_CODE_COOLDOWN_MS = 1000 * 30;
 const DEFAULT_STATUS_NOTIFY_AFTER_MINUTES = 120;
 const MIN_STATUS_NOTIFY_AFTER_MINUTES = 5;
 const MAX_STATUS_NOTIFY_AFTER_MINUTES = 360;
+const DEFAULT_SESSION_NOTIFY_AFTER_MINUTES = 120;
+const MIN_SESSION_NOTIFY_AFTER_MINUTES = 5;
+const MAX_SESSION_NOTIFY_AFTER_MINUTES = 240;
 const WHATSAPP_COOKIE_PATH = '/faturamentos';
 
 type WhatsAppProfile = {
@@ -348,6 +375,12 @@ type StatusAlertState = {
   lastAttemptAt: number | null;
 };
 
+type SessionTokenAlertState = {
+  invalidSince: number | null;
+  notifiedAt: number | null;
+  lastAttemptAt: number | null;
+};
+
 type StatusAlertStateMap = Record<StatusTotalOption, StatusAlertState>;
 
 const buildDefaultStatusAlertStateMap = (): StatusAlertStateMap =>
@@ -386,6 +419,42 @@ const persistStatusAlertStateToStorage = (state: StatusAlertStateMap): void => {
     console.warn('[FaturamentosPage] Não foi possível persistir estado de alertas', error);
   }
 };
+
+const buildDefaultSessionTokenAlertState = (): SessionTokenAlertState => ({
+  invalidSince: null,
+  notifiedAt: null,
+  lastAttemptAt: null,
+});
+
+const loadSessionTokenAlertStateFromStorage = (): SessionTokenAlertState => {
+  if (typeof window === 'undefined') return buildDefaultSessionTokenAlertState();
+  try {
+    const raw = window.localStorage.getItem(SESSION_ALERT_STATE_STORAGE_KEY);
+    if (!raw) return buildDefaultSessionTokenAlertState();
+    const parsed = JSON.parse(raw) as Partial<SessionTokenAlertState>;
+    return {
+      invalidSince: typeof parsed.invalidSince === 'number' ? parsed.invalidSince : null,
+      notifiedAt: typeof parsed.notifiedAt === 'number' ? parsed.notifiedAt : null,
+      lastAttemptAt: typeof parsed.lastAttemptAt === 'number' ? parsed.lastAttemptAt : null,
+    };
+  } catch {
+    return buildDefaultSessionTokenAlertState();
+  }
+};
+
+const persistSessionTokenAlertStateToStorage = (state: SessionTokenAlertState): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SESSION_ALERT_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('[FaturamentosPage] Não foi possível persistir estado do token de sessão', error);
+  }
+};
+
+const buildDefaultSessionTokenAlertConfig = (): SessionTokenAlertConfig => ({
+  notifyWhatsApp: false,
+  notifyAfterMinutes: DEFAULT_SESSION_NOTIFY_AFTER_MINUTES,
+});
 
 const DEFAULT_STATUS_START_FROM: Record<StatusTotalOption, number> = {
   PENDENTE: 0,
@@ -883,6 +952,28 @@ const FaturamentosPage: React.FC = () => {
     }
     return buildDefaultStatusConfigMap();
   });
+  const [sessionTokenAlertConfig, setSessionTokenAlertConfig] = useState<SessionTokenAlertConfig>(() => {
+    if (typeof window === 'undefined') return buildDefaultSessionTokenAlertConfig();
+    try {
+      const stored = window.localStorage.getItem(SESSION_ALERT_CONFIG_STORAGE_KEY);
+      if (!stored) return buildDefaultSessionTokenAlertConfig();
+      const parsed = JSON.parse(stored) as Partial<SessionTokenAlertConfig>;
+      const base = buildDefaultSessionTokenAlertConfig();
+      return {
+        notifyWhatsApp:
+          typeof parsed?.notifyWhatsApp === 'boolean' ? parsed.notifyWhatsApp : base.notifyWhatsApp,
+        notifyAfterMinutes: clampIntOr(
+          parsed?.notifyAfterMinutes,
+          MIN_SESSION_NOTIFY_AFTER_MINUTES,
+          MAX_SESSION_NOTIFY_AFTER_MINUTES,
+          base.notifyAfterMinutes
+        ),
+      };
+    } catch (err) {
+      console.warn('[FaturamentosPage] Falha ao restaurar alerta do token de sessão', err);
+      return buildDefaultSessionTokenAlertConfig();
+    }
+  });
   const [whatsAppProfile, setWhatsAppProfile] = useState<WhatsAppProfile | null>(() =>
     typeof window === 'undefined' ? null : loadWhatsAppProfileFromCookie()
   );
@@ -914,11 +1005,10 @@ const FaturamentosPage: React.FC = () => {
 
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
+  const [showPhpsessidVideo, setShowPhpsessidVideo] = useState<boolean>(false);
   const [topBarVisible, setTopBarVisible] = useState<boolean>(false);
   const [sessionValidateLoading, setSessionValidateLoading] = useState(false);
-  const [sessionValidateResult, setSessionValidateResult] = useState<
-    { valido: boolean; fileId?: string; mensagem?: string } | null
-  >(null);
+  const [sessionValidateResult, setSessionValidateResult] = useState<SessionValidateResult | null>(null);
   const [sessionValidateCheckedAt, setSessionValidateCheckedAt] = useState<Date | null>(null);
   const [sessionUpdateLoading, setSessionUpdateLoading] = useState(false);
   const [sessionUpdateValue, setSessionUpdateValue] = useState('');
@@ -948,6 +1038,7 @@ const FaturamentosPage: React.FC = () => {
 
   const hasFetchedInitially = useRef(false);
   const statusAlertStateRef = useRef<StatusAlertStateMap>(loadStatusAlertStateFromStorage());
+  const sessionTokenAlertStateRef = useRef<SessionTokenAlertState>(loadSessionTokenAlertStateFromStorage());
   const restoreStatusNoticeTimeoutRef = useRef<number | null>(null);
   const [statusDefaultsRestored, setStatusDefaultsRestored] = useState(false);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -1004,6 +1095,11 @@ const FaturamentosPage: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    window.localStorage.setItem(SESSION_ALERT_CONFIG_STORAGE_KEY, JSON.stringify(sessionTokenAlertConfig));
+  }, [sessionTokenAlertConfig]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
       if (!whatsVerification) {
         window.localStorage.removeItem(WHATSAPP_VERIFICATION_STORAGE_KEY);
@@ -1053,13 +1149,17 @@ const FaturamentosPage: React.FC = () => {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!showSettings && !showNotifications) return;
+    if (!showSettings && !showNotifications && !showPhpsessidVideo) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        if (showPhpsessidVideo) {
+          setShowPhpsessidVideo(false);
+          return;
+        }
         setShowSettings(false);
         setShowNotifications(false);
       }
@@ -1070,7 +1170,7 @@ const FaturamentosPage: React.FC = () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showNotifications, showSettings]);
+  }, [showNotifications, showPhpsessidVideo, showSettings]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1277,6 +1377,83 @@ const FaturamentosPage: React.FC = () => {
     return data;
   }, []);
 
+  const maybeTriggerSessionTokenWhatsAppAlert = useCallback(
+    async (result: SessionValidateResult) => {
+      if (!whatsAppProfile?.numero) return;
+
+      const now = Date.now();
+      const currentState = sessionTokenAlertStateRef.current ?? buildDefaultSessionTokenAlertState();
+      let nextState: SessionTokenAlertState = { ...currentState };
+
+      const isInvalid = !result.valido;
+      if (!isInvalid) {
+        nextState = buildDefaultSessionTokenAlertState();
+        sessionTokenAlertStateRef.current = nextState;
+        persistSessionTokenAlertStateToStorage(nextState);
+        return;
+      }
+
+      const justEntered = currentState.invalidSince === null;
+      const invalidSince = currentState.invalidSince ?? now;
+      const notifiedAt = justEntered ? null : currentState.notifiedAt;
+      const lastAttemptAt = justEntered ? null : currentState.lastAttemptAt;
+
+      const waitMinutes = clampInt(
+        typeof sessionTokenAlertConfig.notifyAfterMinutes === 'number' &&
+          Number.isFinite(sessionTokenAlertConfig.notifyAfterMinutes)
+          ? sessionTokenAlertConfig.notifyAfterMinutes
+          : DEFAULT_SESSION_NOTIFY_AFTER_MINUTES,
+        MIN_SESSION_NOTIFY_AFTER_MINUTES,
+        MAX_SESSION_NOTIFY_AFTER_MINUTES
+      );
+      const waitMs = waitMinutes * 60_000;
+      const elapsedMs = now - invalidSince;
+
+      const alreadyNotified = notifiedAt !== null;
+      const throttled = lastAttemptAt !== null && now - lastAttemptAt < 60_000;
+      const shouldNotify =
+        Boolean(sessionTokenAlertConfig.notifyWhatsApp) && !alreadyNotified && !throttled && elapsedMs >= waitMs;
+
+      if (!shouldNotify) {
+        nextState = { invalidSince, notifiedAt, lastAttemptAt };
+        sessionTokenAlertStateRef.current = nextState;
+        persistSessionTokenAlertStateToStorage(nextState);
+        return;
+      }
+
+      nextState = { invalidSince, notifiedAt, lastAttemptAt: now };
+      sessionTokenAlertStateRef.current = nextState;
+      persistSessionTokenAlertStateToStorage(nextState);
+
+      const panelUrl =
+        typeof window !== 'undefined'
+          ? `${window.location.origin}/faturamentos`
+          : 'notify.autevia.com.br/faturamentos';
+
+      const messageLines = [
+        'Monitor NFSe Porto Itapoá',
+        'Alerta de token de sessão',
+        '',
+        `• Token inválido há ${formatDurationShort(elapsedMs)} (limiar ${waitMinutes}m)`,
+        ...(result.fileId ? [`• fileId: ${result.fileId}`] : []),
+        ...(result.mensagem ? [`• ${result.mensagem.slice(0, 180)}`] : []),
+        '',
+        `Painel: ${panelUrl}`,
+      ];
+
+      try {
+        await sendWhatsAppMessage(whatsAppProfile.numero, messageLines.join('\n'));
+        const sentAt = Date.now();
+        nextState = { ...nextState, notifiedAt: sentAt };
+        sessionTokenAlertStateRef.current = nextState;
+        persistSessionTokenAlertStateToStorage(nextState);
+      } catch (error) {
+        console.warn('[FaturamentosPage] Falha ao enviar alerta do token de sessão', error);
+      }
+    },
+    [sendWhatsAppMessage, sessionTokenAlertConfig.notifyAfterMinutes, sessionTokenAlertConfig.notifyWhatsApp, whatsAppProfile?.numero]
+  );
+
   const maybeTriggerWhatsAppAlerts = useCallback(
     async (nextTotals: StatusTotalsMap) => {
       if (!whatsAppProfile?.numero) return;
@@ -1431,6 +1608,37 @@ const FaturamentosPage: React.FC = () => {
         setSessionValidateResult(null);
       }
       try {
+        const normalize = (payload: unknown): SessionValidateResult => {
+          if (typeof payload === 'boolean') return { valido: payload };
+          if (payload && typeof payload === 'object') {
+            const cast = payload as {
+              valido?: unknown;
+              ok?: unknown;
+              fileId?: unknown;
+              mensagem?: unknown;
+              message?: unknown;
+            };
+            const valido =
+              typeof cast.valido === 'boolean'
+                ? cast.valido
+                : typeof cast.ok === 'boolean'
+                ? cast.ok
+                : false;
+            const fileId = typeof cast.fileId === 'string' ? cast.fileId : undefined;
+            const mensagem =
+              typeof cast.mensagem === 'string'
+                ? cast.mensagem
+                : typeof cast.message === 'string'
+                ? cast.message
+                : undefined;
+            const result: SessionValidateResult = { valido };
+            if (fileId) result.fileId = fileId;
+            if (mensagem) result.mensagem = mensagem;
+            return result;
+          }
+          return { valido: false };
+        };
+
         const url = new URL(WEBHOOK_URL);
         url.searchParams.set('resource', 'validar-sessao');
         const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
@@ -1438,15 +1646,22 @@ const FaturamentosPage: React.FC = () => {
           throw new Error(`Falha ao validar sessão (status ${response.status})`);
         }
         const data = await response.json();
-        setSessionValidateResult(data);
+        const normalized = normalize(data);
+        setSessionValidateResult(normalized);
+        void maybeTriggerSessionTokenWhatsAppAlert(normalized);
       } catch (err) {
-        setSessionValidateResult({ valido: false, mensagem: err instanceof Error ? err.message : 'Erro ao validar' });
+        const fallback: SessionValidateResult = {
+          valido: false,
+          mensagem: err instanceof Error ? err.message : 'Erro ao validar',
+        };
+        setSessionValidateResult(fallback);
+        void maybeTriggerSessionTokenWhatsAppAlert(fallback);
       } finally {
         setSessionValidateCheckedAt(new Date());
         setSessionValidateLoading(false);
       }
     },
-    [isAuthenticated]
+    [isAuthenticated, maybeTriggerSessionTokenWhatsAppAlert]
   );
 
   useEffect(() => {
@@ -1475,11 +1690,14 @@ const FaturamentosPage: React.FC = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     void validateSession({ silent: true });
+    const intervalMs = sessionTokenAlertConfig.notifyWhatsApp
+      ? SESSION_VALIDATE_ALERT_INTERVAL_MS
+      : SESSION_VALIDATE_DEFAULT_INTERVAL_MS;
     const id = window.setInterval(() => {
       void validateSession({ silent: true });
-    }, SESSION_VALIDATE_INTERVAL_MS);
+    }, intervalMs);
     return () => window.clearInterval(id);
-  }, [isAuthenticated, validateSession]);
+  }, [isAuthenticated, sessionTokenAlertConfig.notifyWhatsApp, validateSession]);
 
   const filteredItems = useMemo(() => {
     const query = draftFilter.trim();
@@ -1714,6 +1932,26 @@ const FaturamentosPage: React.FC = () => {
     }));
   };
 
+  const handleSessionTokenNotifyWhatsAppChange = (next: boolean) => {
+    setSessionTokenAlertConfig((prev) => ({
+      ...prev,
+      notifyWhatsApp: next,
+      notifyAfterMinutes: clampInt(
+        typeof prev?.notifyAfterMinutes === 'number' ? prev.notifyAfterMinutes : DEFAULT_SESSION_NOTIFY_AFTER_MINUTES,
+        MIN_SESSION_NOTIFY_AFTER_MINUTES,
+        MAX_SESSION_NOTIFY_AFTER_MINUTES
+      ),
+    }));
+  };
+
+  const handleSessionTokenNotifyAfterMinutesChange = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    setSessionTokenAlertConfig((prev) => ({
+      ...prev,
+      notifyAfterMinutes: clampInt(value, MIN_SESSION_NOTIFY_AFTER_MINUTES, MAX_SESSION_NOTIFY_AFTER_MINUTES),
+    }));
+  };
+
   const handleRestoreStatusDefaults = () => {
     const defaults = buildDefaultStatusConfigMap();
     setStatusConfig(defaults);
@@ -1746,6 +1984,7 @@ const FaturamentosPage: React.FC = () => {
   const handleCloseModals = () => {
     setShowSettings(false);
     setShowNotifications(false);
+    setShowPhpsessidVideo(false);
   };
 
   const handleSendWhatsAppCode = async () => {
@@ -3396,6 +3635,86 @@ const FaturamentosPage: React.FC = () => {
 	                        </div>
 	                      );
 	                    })}
+
+                      <div className="card card-ring p-3">
+                        <div className="sm:hidden">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
+                                Token de sessão
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+                                Notificar
+                              </span>
+                              <SwitchButton
+                                checked={Boolean(sessionTokenAlertConfig.notifyWhatsApp)}
+                                disabled={!whatsAppProfile?.numero}
+                                onToggle={() =>
+                                  handleSessionTokenNotifyWhatsAppChange(!Boolean(sessionTokenAlertConfig.notifyWhatsApp))
+                                }
+                                ariaLabel="Notificar token de sessão"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 gap-2">
+                            <label className="space-y-1 text-xs text-muted">
+                              <span className="text-[10px] font-semibold uppercase tracking-[0.26em] text-subtle">
+                                Tempo (min)
+                              </span>
+                              <input
+                                type="number"
+                                min={MIN_SESSION_NOTIFY_AFTER_MINUTES}
+                                max={MAX_SESSION_NOTIFY_AFTER_MINUTES}
+                                value={sessionTokenAlertConfig.notifyAfterMinutes}
+                                disabled={!whatsAppProfile?.numero || !sessionTokenAlertConfig.notifyWhatsApp}
+                                onChange={(e) => handleSessionTokenNotifyAfterMinutesChange(Number(e.target.value))}
+                                className="input-field input-field-rect input-field-sm w-full text-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="hidden sm:grid sm:grid-cols-[minmax(0,1fr)_72px_84px_92px_84px] sm:items-center sm:gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">
+                              Token de sessão
+                            </p>
+                          </div>
+
+                          <span className="text-center text-sm text-subtle">—</span>
+                          <span className="text-center text-sm text-subtle">—</span>
+
+                          <div className="flex justify-center">
+                            <SwitchButton
+                              checked={Boolean(sessionTokenAlertConfig.notifyWhatsApp)}
+                              disabled={!whatsAppProfile?.numero}
+                              onToggle={() =>
+                                handleSessionTokenNotifyWhatsAppChange(!Boolean(sessionTokenAlertConfig.notifyWhatsApp))
+                              }
+                              ariaLabel="Notificar token de sessão"
+                            />
+                          </div>
+
+                          <input
+                            type="number"
+                            min={MIN_SESSION_NOTIFY_AFTER_MINUTES}
+                            max={MAX_SESSION_NOTIFY_AFTER_MINUTES}
+                            value={sessionTokenAlertConfig.notifyAfterMinutes}
+                            disabled={!whatsAppProfile?.numero || !sessionTokenAlertConfig.notifyWhatsApp}
+                            onChange={(e) => handleSessionTokenNotifyAfterMinutesChange(Number(e.target.value))}
+                            aria-label="Tempo em alerta para token de sessão (min)"
+                            className="input-field input-field-rect input-field-sm w-full text-center text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                          />
+                        </div>
+
+                        <p className="mt-3 text-xs text-muted">
+                          Notifica se o token continuar inválido por {sessionTokenAlertConfig.notifyAfterMinutes} min.
+                          Ao voltar válido, zera o alerta.
+                        </p>
+                      </div>
 	                  </div>
 	                </section>
 	
@@ -3455,6 +3774,54 @@ const FaturamentosPage: React.FC = () => {
                   {sessionUpdateResult && (
                     <p className="text-xs text-muted">{sessionUpdateResult.mensagem}</p>
 	                  )}
+
+                  <div className="card card-ring mt-4 space-y-3 bg-[rgba(255,255,255,0.02)] px-4 py-3">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">
+                        Documentação
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        Abra o portal e siga o passo a passo para copiar o token.
+                      </p>
+                    </div>
+
+                    <a
+                      href={PHPSESSID_PORTAL_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-ghost inline-flex w-full items-center justify-between gap-2 text-sm"
+                    >
+                      <span className="truncate">Abrir portal NFSe Itapoá</span>
+                      <span className="text-xs text-subtle">↗</span>
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPhpsessidVideo(true)}
+                      className="card card-ring group w-full overflow-hidden p-0 text-left"
+                      aria-label={`Assistir vídeo: ${PHPSESSID_VIDEO_LABEL}`}
+                    >
+                      <div className="relative">
+                        <img
+                          src={PHPSESSID_VIDEO_POSTER_URL}
+                          alt="Miniatura do vídeo explicativo"
+                          loading="lazy"
+                          className="h-36 w-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/30 transition group-hover:bg-black/20" />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white">
+                            <PlayIcon className="h-4 w-4" />
+                            Assistir
+                          </div>
+                        </div>
+                      </div>
+                      <div className="px-4 py-3">
+                        <p className="text-sm font-semibold text-white">{PHPSESSID_VIDEO_LABEL}</p>
+                        <p className="mt-1 text-xs text-muted">Clique para assistir em tela grande.</p>
+                      </div>
+                    </button>
+                  </div>
 	                </div>
 	              </section>
 
@@ -3490,6 +3857,45 @@ const FaturamentosPage: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
+
+      {showPhpsessidVideo && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end bg-black/80 backdrop-blur md:items-center md:justify-center"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={() => setShowPhpsessidVideo(false)}
+        >
+          <div
+            className="surface surface-sheet flex w-full max-h-[92vh] flex-col overflow-hidden sm:mx-4 md:max-w-5xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-[rgba(255,255,255,0.06)] bg-[rgba(5,7,20,0.35)] px-4 pb-4 pt-4 backdrop-blur sm:px-6 sm:pt-6">
+              <div className="mx-auto mb-3 h-1 w-12 rounded-full bg-[rgba(255,255,255,0.14)] md:hidden" />
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-subtle">Documentação</p>
+                  <h2 className="text-xl font-semibold text-white">{PHPSESSID_VIDEO_LABEL}</h2>
+                </div>
+                <button type="button" onClick={() => setShowPhpsessidVideo(false)} className="btn btn-ghost text-sm">
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 pb-[calc(18px+env(safe-area-inset-bottom))] pt-5 sm:px-6">
+              <video
+                controls
+                playsInline
+                preload="metadata"
+                poster={PHPSESSID_VIDEO_POSTER_URL}
+                className="w-full max-h-[72vh] rounded-lg bg-black"
+              >
+                <source src={PHPSESSID_VIDEO_URL} type="video/mp4" />
+              </video>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

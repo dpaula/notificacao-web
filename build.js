@@ -3,6 +3,11 @@ const esbuild = require('esbuild');
 const fs = require('fs/promises');
 const path = require('path');
 
+async function copyStaticAsset(srcPath, destPath) {
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
+  await fs.copyFile(srcPath, destPath);
+}
+
 async function build() {
   const distDir = 'dist';
 
@@ -65,6 +70,16 @@ async function build() {
 
   // Copy the service worker file to the dist directory
   await fs.copyFile('sw.js', path.join(distDir, 'sw.js'));
+
+  // Copy static assets used by the UI (served by server.js from /dist)
+  await copyStaticAsset(
+    path.join('assets', 'videos', 'pegar_phpsessid_web.mp4'),
+    path.join(distDir, 'assets', 'videos', 'pegar_phpsessid_web.mp4')
+  );
+  await copyStaticAsset(
+    path.join('assets', 'videos', 'pegar_phpsessid_poster.webp'),
+    path.join(distDir, 'assets', 'videos', 'pegar_phpsessid_poster.webp')
+  );
 
   console.log('Build finished successfully and output to /dist');
 }

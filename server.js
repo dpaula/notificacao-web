@@ -29,6 +29,29 @@ if (missingEnvVars.length > 0) {
   process.exit(1);
 }
 
+// --- Runtime polyfills (Node < 18) ---
+// The OpenAI SDK relies on Web APIs like fetch/ReadableStream. On older Node versions,
+// we polyfill them so `npm run start` works reliably in local/dev environments.
+if (typeof globalThis.fetch !== 'function') {
+  const { fetch, Headers, Request, Response, FormData, Blob, File } = require('undici');
+  globalThis.fetch = fetch;
+  globalThis.Headers = Headers;
+  globalThis.Request = Request;
+  globalThis.Response = Response;
+  if (typeof globalThis.FormData === 'undefined' && FormData) globalThis.FormData = FormData;
+  if (typeof globalThis.Blob === 'undefined' && Blob) globalThis.Blob = Blob;
+  if (typeof globalThis.File === 'undefined' && File) globalThis.File = File;
+}
+
+if (typeof globalThis.ReadableStream === 'undefined') {
+  try {
+    const { ReadableStream } = require('stream/web');
+    globalThis.ReadableStream = ReadableStream;
+  } catch (err) {
+    console.warn('[Polyfill] Failed to load ReadableStream from stream/web:', err?.message || err);
+  }
+}
+
 // --- OpenAI Client Configuration ---
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
