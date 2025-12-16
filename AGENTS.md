@@ -23,7 +23,7 @@
   - Configuração de CORS baseada em `ALLOWED_ORIGINS`, com fallback para `notify.autevia.com.br`, garantindo que apenas domínios aprovados acessem as APIs.  
   - Página dedicada `/faturamentos` consulta o webhook do n8n (`/webhook/fats`) para listar processos de NFSe, suportando filtros por intervalo (5m, 15m, 30m, 60m), status específicos, busca por draft (total ou últimos 4 dígitos com varredura automática das páginas seguintes) e ordenação dinâmica (data, draft ou status); o acesso é protegido por uma tela de login com credenciais temporárias e a página apresenta os XMLs de requisição e retorno.  
   - Visualização de cada processo inclui resumo em cards, exibição dos XMLs em layout tipo schema hierárquico (colapsável, com destaque de atributos) e botões de cópia rápida, além de badges de status com cores distintas.
-  - Tela de login otimizada para autocomplete/salvamento de credenciais no navegador, com opção de lembrar acesso por 7 dias.
+  - Tela de login do `/faturamentos` valida 2 usuários temporários (via `VITE_FAT_AUTH_USERS` no build, com fallback para credenciais padrão), mantém acesso por 7 dias (localStorage) e chama a Credentials API do navegador para permitir salvar/autopreencher no Chrome.
 - **Integrações externas:**  
   - Serviço Web Push dos navegadores via biblioteca `web-push`, utilizando VAPID para autenticação junto aos push services (ex.: FCM).  
   - Service Worker `sw.js` responsável por exibir notificações, responder a cliques e disparar testes locais por mensagem do cliente.  
@@ -42,7 +42,14 @@ VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:fernando.dpaula@gmail.com
 API_TOKEN=
 ALLOWED_ORIGINS=https://notify.autevia.com.br/
+VITE_FAT_AUTH_USERS=
+OPENAI_API_KEY=
+CHATKIT_WORKFLOW_ID=
+VITE_CHATKIT_WORKFLOW_ID=
 ```
+
+Notas:
+- `VITE_FAT_AUTH_USERS`: lista no formato `usuario:senha` separada por vírgula (ex.: `user1:pass1,user2:pass2`).
 
 **DNS e Domínio**
 - https://notify.autevia.com.br/

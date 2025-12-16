@@ -14,6 +14,7 @@ async function build() {
   // Read VAPID public key from environment variables
   const vapidPublicKey = process.env.VITE_VAPID_PUBLIC_KEY;
   const chatkitWorkflowId = process.env.VITE_CHATKIT_WORKFLOW_ID || '';
+  const faturamentosAuthUsers = process.env.VITE_FAT_AUTH_USERS || '';
 
   if (!vapidPublicKey) {
     console.error('\x1b[31m%s\x1b[0m', 'Error: VITE_VAPID_PUBLIC_KEY environment variable is not set.');
@@ -23,6 +24,12 @@ async function build() {
 
   if (!chatkitWorkflowId) {
     console.warn('\x1b[33m%s\x1b[0m', 'Warning: VITE_CHATKIT_WORKFLOW_ID is not set. The ChatKit page will display a placeholder workflow id.');
+  }
+  if (!faturamentosAuthUsers) {
+    console.warn(
+      '\x1b[33m%s\x1b[0m',
+      'Warning: VITE_FAT_AUTH_USERS is not set. The /faturamentos page will fall back to the default temporary credentials.'
+    );
   }
 
   // Ensure the dist directory is clean
@@ -41,6 +48,7 @@ async function build() {
       // Inject env variables into the frontend bundle via import.meta.env
       'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(vapidPublicKey),
       'import.meta.env.VITE_CHATKIT_WORKFLOW_ID': JSON.stringify(chatkitWorkflowId),
+      'import.meta.env.VITE_FAT_AUTH_USERS': JSON.stringify(faturamentosAuthUsers),
     },
     loader: {
       '.tsx': 'tsx',

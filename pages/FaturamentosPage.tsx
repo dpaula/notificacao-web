@@ -107,6 +107,40 @@ const CopyIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const EyeIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+const EyeOffIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M3 3l18 18" />
+    <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+    <path d="M9.5 5.2A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a18.2 18.2 0 0 1-4 5.2" />
+    <path d="M6.3 6.3C3.6 8.2 2 12 2 12s3.5 7 10 7c1 0 2-.1 2.9-.4" />
+  </svg>
+);
+
 const GearIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     viewBox="0 0 24 24"
@@ -636,10 +670,37 @@ const computeDisplayTotal = (value: number | null, config: StatusConfig): number
   return Math.max(0, value - (config.startFrom ?? 0));
 };
 
-const TEMP_USERS = [
+type TempUser = {
+  username: string;
+  password: string;
+};
+
+const parseTempUsers = (raw: unknown): TempUser[] => {
+  if (typeof raw !== 'string') return [];
+  return raw
+    .split(/[,\n]/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf(':');
+      if (separatorIndex <= 0) return null;
+      const username = entry.slice(0, separatorIndex).trim();
+      const password = entry.slice(separatorIndex + 1);
+      if (!username || !password) return null;
+      return { username, password };
+    })
+    .filter((user): user is TempUser => Boolean(user));
+};
+
+const DEFAULT_FAT_AUTH_USERS: TempUser[] = [
   { username: 'porto.ti', password: 'tIPorto@2026' },
   { username: 'admin.ti', password: 'admtIPorto@2026' },
-] as const;
+];
+
+const TEMP_USERS = (() => {
+  const fromEnv = parseTempUsers((import.meta as any).env?.VITE_FAT_AUTH_USERS);
+  return fromEnv.length > 0 ? fromEnv : DEFAULT_FAT_AUTH_USERS;
+})();
 
 const AUTH_STORAGE_KEY = 'porto_nfse_auth';
 const AUTH_PREF_KEY = 'porto_nfse_remember';
@@ -913,6 +974,7 @@ const FaturamentosPage: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [passwordVisible, setPasswordVisible] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [rememberDevice, setRememberDevice] = useState<boolean>(true);
   const [totals, setTotals] = useState<StatusTotalsMap>(() =>
@@ -2152,9 +2214,28 @@ const FaturamentosPage: React.FC = () => {
     }
   };
 
+  const storeBrowserCredential = async (form: HTMLFormElement) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const nav = navigator as any;
+      const win = window as any;
+      if (!nav?.credentials?.store) return;
+      if (typeof win.PasswordCredential !== 'function') return;
+      const credential = new win.PasswordCredential(form);
+      await nav.credentials.store(credential);
+    } catch (error) {
+      console.warn('[FaturamentosPage] Não foi possível salvar credenciais no navegador', error);
+    }
+  };
+
   const handleAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (authLoading) return;
+
+    if (TEMP_USERS.length === 0) {
+      setAuthError('Login indisponível. Credenciais não configuradas.');
+      return;
+    }
 
     const formData = new FormData(event.currentTarget);
     const username = (formData.get('username') as string | null)?.trim() ?? '';
@@ -2173,6 +2254,9 @@ const FaturamentosPage: React.FC = () => {
       setAuthError(null);
       setIsAuthenticated(true);
       setAuthLoading(false);
+
+      void storeBrowserCredential(event.currentTarget);
+
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(AUTH_PREF_KEY, rememberDevice ? 'true' : 'false');
         if (rememberDevice) {
@@ -2336,22 +2420,22 @@ const FaturamentosPage: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [isAuthenticated]);
 
-	  if (!isAuthenticated) {
-	    return (
-	      <div className="app-shell">
-	        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-6 py-12">
-	          <div className="surface w-full max-w-md p-10">
-	            <div className="flex flex-col items-center gap-4">
-	              <img
-	                src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
-	                alt="Porto Itapoá"
-	                className="h-16 w-full max-w-[200px] object-contain"
-	              />
-	              <h1 className="text-2xl font-semibold text-white">Monitor - NFSe Porto Itapoá</h1>
-	              <p className="text-center text-sm text-muted">
-	                Acesso restrito a usuários autorizados. Utilize as credenciais temporárias fornecidas.
-	              </p>
-	            </div>
+  if (!isAuthenticated) {
+    return (
+      <div className="app-shell">
+        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-6 py-12">
+          <div className="surface w-full max-w-md p-10">
+            <div className="flex flex-col items-center gap-4">
+              <img
+                src="https://www.portoitapoa.com/wp-content/uploads/2020/10/logo-grande-1.png"
+                alt="Porto Itapoá"
+                className="h-16 w-full max-w-[200px] object-contain"
+              />
+              <h1 className="text-2xl font-semibold text-white">Monitor - NFSe Porto Itapoá</h1>
+              <p className="text-center text-sm text-muted">
+                Acesso restrito a usuários autorizados. Utilize as credenciais temporárias fornecidas.
+              </p>
+            </div>
 
             <form
               className="mt-8 space-y-5"
@@ -2375,21 +2459,36 @@ const FaturamentosPage: React.FC = () => {
 	                  placeholder="Digite o usuário"
 	                />
 	              </div>
-	              <div className="space-y-2">
-	                <label htmlFor="password" className="text-[11px] font-semibold uppercase tracking-[0.3em] text-subtle">
-	                  Senha
-	                </label>
-	                <input
-	                  ref={passwordRef}
-	                  id="password"
-	                  name="password"
-	                  type="password"
-	                  autoComplete="current-password"
-	                  required
-	                  className="input-field input-field-rect text-sm"
-	                  placeholder="Digite a senha"
-	                />
-	              </div>
+		              <div className="space-y-2">
+		                <label htmlFor="password" className="text-[11px] font-semibold uppercase tracking-[0.3em] text-subtle">
+		                  Senha
+		                </label>
+		                <div className="relative">
+		                  <input
+		                    ref={passwordRef}
+		                    id="password"
+		                    name="password"
+		                    type={passwordVisible ? 'text' : 'password'}
+		                    autoComplete="current-password"
+		                    required
+		                    className="input-field input-field-rect pr-12 text-sm"
+		                    placeholder="Digite a senha"
+		                  />
+		                  <button
+		                    type="button"
+		                    className="icon-btn absolute right-2 top-1/2 -translate-y-1/2"
+		                    onClick={() => setPasswordVisible((prev) => !prev)}
+		                    aria-label={passwordVisible ? 'Ocultar senha' : 'Mostrar senha'}
+		                    title={passwordVisible ? 'Ocultar senha' : 'Mostrar senha'}
+		                  >
+		                    {passwordVisible ? (
+		                      <EyeOffIcon className="h-4 w-4" />
+		                    ) : (
+		                      <EyeIcon className="h-4 w-4" />
+		                    )}
+		                  </button>
+		                </div>
+		              </div>
 	
 	              <div className="flex items-center justify-between gap-3 text-xs text-muted">
 	                <label className="inline-flex items-center gap-2">
