@@ -984,6 +984,7 @@ const FaturamentosPage: React.FC = () => {
   const [totalsError, setTotalsError] = useState<string | null>(null);
   const [totalsAnimating, setTotalsAnimating] = useState<boolean>(false);
   const [totalsDetailsOpen, setTotalsDetailsOpen] = useState<boolean>(false);
+  const [totalsCheckedAt, setTotalsCheckedAt] = useState<Date | null>(null);
   const totalsAnimationTimeoutRef = useRef<number | null>(null);
   const [statusConfig, setStatusConfig] = useState<StatusConfigMap>(() => {
     if (typeof window === 'undefined') return buildDefaultStatusConfigMap();
@@ -1649,6 +1650,7 @@ const FaturamentosPage: React.FC = () => {
         STATUS_TOTALS.reduce((acc, status) => ({ ...acc, [status]: null }), {} as StatusTotalsMap)
       );
       setTotals(nextTotals);
+      setTotalsCheckedAt(new Date());
       void maybeTriggerWhatsAppAlerts(nextTotals);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao carregar totais por status.';
@@ -1661,6 +1663,13 @@ const FaturamentosPage: React.FC = () => {
       }, 900);
     }
   }, [isAuthenticated, maybeTriggerWhatsAppAlerts]);
+
+  const lastVerificationAt = useMemo(() => {
+    if (totalsCheckedAt && sessionValidateCheckedAt) {
+      return totalsCheckedAt > sessionValidateCheckedAt ? totalsCheckedAt : sessionValidateCheckedAt;
+    }
+    return totalsCheckedAt ?? sessionValidateCheckedAt;
+  }, [sessionValidateCheckedAt, totalsCheckedAt]);
 
   const validateSession = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -2664,10 +2673,10 @@ const FaturamentosPage: React.FC = () => {
                   : 'Token não verificado'}
               </button>
 
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">
-                Última verificação: <span className="text-white">{formatTimeShort(sessionValidateCheckedAt)}</span>
-              </p>
-            </div>
+	              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">
+	                Última verificação: <span className="text-white">{formatTimeShort(lastVerificationAt)}</span>
+	              </p>
+	            </div>
 
             <div className="md:hidden">
               <div className="flex items-center justify-between gap-3 px-1">
