@@ -44,8 +44,10 @@ type FaturamentoResumo = {
 
 const WEBHOOK_URL = 'https://n8n.autevia.com.br/webhook/fats';
 
-const INTERVAL_OPTIONS = ['5m', '15m', '30m', '60m'] as const;
+const INTERVAL_OPTIONS = ['15m', '30m', '60m', '120m', '240m'] as const;
 type IntervalOption = (typeof INTERVAL_OPTIONS)[number];
+const LIST_BATCH_SIZE = 10;
+const SESSION_VALIDATE_INTERVAL_MS = 15 * 60 * 1000;
 
 const STATUS_OPTIONS = [
   'PENDENTE',
@@ -182,6 +184,12 @@ const formatDateTime = (iso?: string, fallback?: string): string => {
   }).format(date);
 };
 
+const formatTimeShort = (date?: Date | null): string => {
+  if (!date) return '—';
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short' }).format(date);
+};
+
 const formatCurrencyBRL = (value?: number | null): string => {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 }).format(
@@ -280,6 +288,18 @@ const formatDurationShort = (ms: number): string => {
   if (hours <= 0) return `${minutes}m`;
   if (minutes <= 0) return `${hours}h`;
   return `${hours}h ${minutes}m`;
+};
+
+const formatIntervalLabel = (value: IntervalOption): string => {
+  const match = value.match(/^(\d+)m$/);
+  if (!match) return value;
+  const minutes = Number(match[1]);
+  if (!Number.isFinite(minutes) || minutes <= 0) return value;
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    if (hours >= 1) return `${hours}h`;
+  }
+  return value;
 };
 
 const readCookieValue = (name: string): string | null => {
@@ -488,6 +508,28 @@ const statusBadgeClassName = (status: string): string => {
   if (warnStatuses.includes(status as StatusOption)) return `${base} badge-warn`;
   if (status === 'ENVIADO_SAP') return `${base} badge-ok`;
   return `${base} badge-soft`;
+};
+
+const formatStatusTitle = (status: string): string => {
+  const words = status
+    .trim()
+    .split('_')
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (lower === 'sap') return 'SAP';
+      if (lower === 'nfse') return 'NFSe';
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+    });
+  return words.join(' ');
+};
+
+const statusDotClassName = (status: string): string => {
+  const warnStatuses: StatusOption[] = ['PENDENTE', 'DRAFT_PENDENTE', 'PROCESSANDO_INTEGRACAO'];
+  if (status.startsWith('ERRO')) return 'bg-[rgba(224,32,32,0.85)]';
+  if (warnStatuses.includes(status as StatusOption)) return 'bg-[rgba(144,192,48,0.80)]';
+  if (status === 'ENVIADO_SAP') return 'bg-[rgba(0,112,80,0.82)]';
+  return 'bg-[rgba(255,255,255,0.28)]';
 };
 
 const totalStatusClasses = (
@@ -789,12 +831,16 @@ const TotalsSummaryTile: React.FC<{
 const FaturamentosPage: React.FC = () => {
   const [items, setItems] = useState<FaturamentoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [intervalFilter, setIntervalFilter] = useState<IntervalOption>('15m');
   const [statusFilter, setStatusFilter] = useState<StatusOption | ''>('');
   const [draftFilter, setDraftFilter] = useState<string>('');
   const [sortOption, setSortOption] = useState<SortOption>('date');
+  const [visibleCount, setVisibleCount] = useState<number>(LIST_BATCH_SIZE);
+  const [distinctStatusesExpanded, setDistinctStatusesExpanded] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(false);
@@ -873,6 +919,7 @@ const FaturamentosPage: React.FC = () => {
   const [sessionValidateResult, setSessionValidateResult] = useState<
     { valido: boolean; fileId?: string; mensagem?: string } | null
   >(null);
+  const [sessionValidateCheckedAt, setSessionValidateCheckedAt] = useState<Date | null>(null);
   const [sessionUpdateLoading, setSessionUpdateLoading] = useState(false);
   const [sessionUpdateValue, setSessionUpdateValue] = useState('');
   const [sessionUpdateResult, setSessionUpdateResult] = useState<{ mensagem: string } | null>(null);
@@ -910,6 +957,8 @@ const FaturamentosPage: React.FC = () => {
   const copyTimeoutRef = useRef<number | null>(null);
   const usernameRef = useRef<HTMLInputElement | null>(null);
   const passwordRef = useRef<HTMLInputElement | null>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreLockRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1073,6 +1122,7 @@ const FaturamentosPage: React.FC = () => {
       const reset = override?.reset ?? page === 0;
       const intervalValue = override?.interval ?? activeInterval;
       const statusValue = override?.status ?? activeStatus;
+      const isLoadMore = !reset;
 
       if (!isAuthenticated) {
         return;
@@ -1082,10 +1132,18 @@ const FaturamentosPage: React.FC = () => {
         setItems([]);
         setLoadedPages([]);
         setTotalPages(1);
+        setVisibleCount(LIST_BATCH_SIZE);
+        setLoadMoreError(null);
       }
 
-      setIsLoading(true);
-      setError(null);
+      if (isLoadMore) {
+        setIsLoadingMore(true);
+        setLoadMoreError(null);
+      } else {
+        setIsLoading(true);
+        setError(null);
+        setLoadMoreError(null);
+      }
 
       try {
         const url = new URL(WEBHOOK_URL);
@@ -1133,9 +1191,17 @@ const FaturamentosPage: React.FC = () => {
       } catch (err) {
         console.error('[FaturamentosPage] Erro ao carregar dados', err);
         const message = err instanceof Error ? err.message : 'Não foi possível carregar os faturamentos.';
-        setError(message);
+        if (isLoadMore) {
+          setLoadMoreError(message);
+        } else {
+          setError(message);
+        }
       } finally {
-        setIsLoading(false);
+        if (isLoadMore) {
+          setIsLoadingMore(false);
+        } else {
+          setIsLoading(false);
+        }
       }
     },
     [activeInterval, activeStatus, isAuthenticated]
@@ -1357,6 +1423,32 @@ const FaturamentosPage: React.FC = () => {
     }
   }, [isAuthenticated, maybeTriggerWhatsAppAlerts]);
 
+  const validateSession = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!isAuthenticated) return;
+      setSessionValidateLoading(true);
+      if (!options?.silent) {
+        setSessionValidateResult(null);
+      }
+      try {
+        const url = new URL(WEBHOOK_URL);
+        url.searchParams.set('resource', 'validar-sessao');
+        const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+        if (!response.ok) {
+          throw new Error(`Falha ao validar sessão (status ${response.status})`);
+        }
+        const data = await response.json();
+        setSessionValidateResult(data);
+      } catch (err) {
+        setSessionValidateResult({ valido: false, mensagem: err instanceof Error ? err.message : 'Erro ao validar' });
+      } finally {
+        setSessionValidateCheckedAt(new Date());
+        setSessionValidateLoading(false);
+      }
+    },
+    [isAuthenticated]
+  );
+
   useEffect(() => {
     if (!autoRefreshEnabled || !isAuthenticated) return;
     const id = window.setInterval(() => {
@@ -1379,6 +1471,15 @@ const FaturamentosPage: React.FC = () => {
     fetchData({ interval: '15m', status: '', reset: true, page: 0 });
     fetchTotals();
   }, [fetchData, fetchTotals, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void validateSession({ silent: true });
+    const id = window.setInterval(() => {
+      void validateSession({ silent: true });
+    }, SESSION_VALIDATE_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [isAuthenticated, validateSession]);
 
   const filteredItems = useMemo(() => {
     const query = draftFilter.trim();
@@ -1409,6 +1510,21 @@ const FaturamentosPage: React.FC = () => {
     }
   }, [filteredItems, sortOption]);
 
+  const visibleItems = useMemo(
+    () => sortedItems.slice(0, Math.max(LIST_BATCH_SIZE, visibleCount)),
+    [sortedItems, visibleCount]
+  );
+
+  const visibleNowCount = useMemo(
+    () => Math.min(sortedItems.length, visibleItems.length),
+    [sortedItems.length, visibleItems.length]
+  );
+
+  const visibleNowPct = useMemo(() => {
+    if (sortedItems.length <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.round((visibleNowCount / sortedItems.length) * 100)));
+  }, [sortedItems.length, visibleNowCount]);
+
   const summary = useMemo(() => {
     if (!filteredItems.length) {
       return {
@@ -1416,15 +1532,18 @@ const FaturamentosPage: React.FC = () => {
         ultimaEmissao: null as string | null,
         emitidas: 0,
         statusUnicos: 0,
+        statusCounts: {} as Record<string, number>,
       };
     }
 
     let ultimaEmissao: Date | null = null;
     let emitidas = 0;
     const statusSet = new Set<string>();
+    const statusCounts: Record<string, number> = {};
 
     filteredItems.forEach((item) => {
       statusSet.add(item.status);
+      statusCounts[item.status] = (statusCounts[item.status] ?? 0) + 1;
 
       const dataNf = extractTagValue(item.xmlRetorno, 'data_nfse');
       const horaNf = extractTagValue(item.xmlRetorno, 'hora_nfse');
@@ -1447,8 +1566,39 @@ const FaturamentosPage: React.FC = () => {
       ultimaEmissao: ultimaEmissao ? formatDateTime(ultimaEmissao.toISOString()) : null,
       emitidas,
       statusUnicos: statusSet.size,
+      statusCounts,
     };
   }, [filteredItems]);
+
+  const emitidasPct = useMemo(() => {
+    if (summary.totalProcessos <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.round((summary.emitidas / summary.totalProcessos) * 100)));
+  }, [summary.emitidas, summary.totalProcessos]);
+
+  const distinctStatusList = useMemo(() => {
+    const entries = Object.entries(summary.statusCounts)
+      .filter(([, count]) => typeof count === 'number' && count > 0)
+      .map(([status, count]) => ({ status, count: count as number }));
+
+    const knownOrder = new Map<string, number>();
+    STATUS_OPTIONS.forEach((status, index) => knownOrder.set(status, index));
+
+    entries.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      const aKnown = knownOrder.get(a.status) ?? Number.MAX_SAFE_INTEGER;
+      const bKnown = knownOrder.get(b.status) ?? Number.MAX_SAFE_INTEGER;
+      if (aKnown !== bKnown) return aKnown - bKnown;
+      return a.status.localeCompare(b.status);
+    });
+
+    return entries;
+  }, [summary.statusCounts]);
+
+  const distinctStatusHasMore = distinctStatusList.length > 4;
+  const distinctStatusVisible = useMemo(
+    () => (distinctStatusesExpanded ? distinctStatusList : distinctStatusList.slice(0, 4)),
+    [distinctStatusesExpanded, distinctStatusList]
+  );
 
   const totalsDisplayedByStatus = useMemo(() => {
     return STATUS_TOTALS.reduce<Record<StatusTotalOption, number | null>>((acc, status) => {
@@ -1728,25 +1878,6 @@ const FaturamentosPage: React.FC = () => {
     setAutoRefreshEnabled((prev) => !prev);
   };
 
-  const handleValidateSession = async () => {
-    setSessionValidateLoading(true);
-    setSessionValidateResult(null);
-    try {
-      const url = new URL(WEBHOOK_URL);
-      url.searchParams.set('resource', 'validar-sessao');
-      const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
-      if (!response.ok) {
-        throw new Error(`Falha ao validar sessão (status ${response.status})`);
-      }
-      const data = await response.json();
-      setSessionValidateResult(data);
-    } catch (err) {
-      setSessionValidateResult({ valido: false, mensagem: err instanceof Error ? err.message : 'Erro ao validar' });
-    } finally {
-      setSessionValidateLoading(false);
-    }
-  };
-
   const handleUpdateSession = async () => {
     if (!sessionUpdateValue.trim()) {
       setSessionUpdateResult({ mensagem: 'Informe um token PHPSESSID.' });
@@ -1841,11 +1972,93 @@ const FaturamentosPage: React.FC = () => {
     }
   };
 
+  const handleLoadMore = useCallback(async () => {
+    if (!isAuthenticated) return;
+    if (error) return;
+    if (isLoading || isLoadingMore) return;
+    if (loadMoreLockRef.current) return;
+    if (sortedItems.length === 0) return;
+
+    const currentVisible = Math.max(LIST_BATCH_SIZE, visibleCount);
+    const hasMoreToShow = currentVisible < sortedItems.length;
+    const hasMorePages = loadedPages.length < totalPages;
+
+    if (!hasMoreToShow && !hasMorePages) {
+      return;
+    }
+
+    loadMoreLockRef.current = true;
+    setLoadMoreError(null);
+
+    try {
+      const nextVisible = currentVisible + LIST_BATCH_SIZE;
+      setVisibleCount(nextVisible);
+
+      if (sortedItems.length >= nextVisible || !hasMorePages) {
+        return;
+      }
+
+      const loadedSet = new Set<number>(loadedPages);
+      let nextPage: number | null = null;
+      for (let i = 0; i < totalPages; i += 1) {
+        if (!loadedSet.has(i)) {
+          nextPage = i;
+          break;
+        }
+      }
+
+      if (nextPage !== null) {
+        await fetchData({ page: nextPage, reset: false });
+      }
+    } finally {
+      loadMoreLockRef.current = false;
+    }
+  }, [
+    error,
+    fetchData,
+    isAuthenticated,
+    isLoading,
+    isLoadingMore,
+    loadedPages,
+    totalPages,
+    visibleCount,
+    sortedItems.length,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (typeof window === 'undefined') return;
+    if (typeof IntersectionObserver === 'undefined') return;
+    if (error) return;
+
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel) return;
+    if (sortedItems.length === 0) return;
+
+    const currentVisible = Math.max(LIST_BATCH_SIZE, visibleCount);
+    const hasMoreToShow = currentVisible < sortedItems.length;
+    const hasMorePages = loadedPages.length < totalPages;
+    const canLoadMore = hasMoreToShow || hasMorePages;
+    if (!canLoadMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void handleLoadMore();
+        }
+      },
+      { rootMargin: '260px 0px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [error, handleLoadMore, isAuthenticated, loadedPages.length, sortedItems.length, totalPages, visibleCount]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
     if (!draftFilter.trim()) return;
     if (filteredItems.length > 0) return;
-    if (isLoading) return;
+    if (isLoading || isLoadingMore) return;
     if (loadedPages.length >= totalPages) return;
 
     const nextPage = (() => {
@@ -1860,7 +2073,7 @@ const FaturamentosPage: React.FC = () => {
     if (nextPage !== null) {
       fetchData({ page: nextPage, reset: false });
     }
-  }, [draftFilter, filteredItems.length, isLoading, loadedPages, totalPages, fetchData, isAuthenticated]);
+  }, [draftFilter, filteredItems.length, isLoading, isLoadingMore, loadedPages, totalPages, fetchData, isAuthenticated]);
 
   useEffect(
     () => () => {
@@ -2078,6 +2291,46 @@ const FaturamentosPage: React.FC = () => {
               </div>
             )}
 
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 px-1">
+              <button
+                type="button"
+                onClick={handleOpenSettings}
+                className={`badge transition hover:brightness-110 ${
+                  sessionValidateLoading
+                    ? 'badge-soft'
+                    : sessionValidateResult?.valido
+                    ? 'badge-ok'
+                    : sessionValidateResult
+                    ? 'badge-danger'
+                    : 'badge-soft'
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    sessionValidateLoading
+                      ? 'bg-[rgba(255,255,255,0.35)]'
+                      : sessionValidateResult?.valido
+                      ? 'bg-[rgba(0,112,80,0.85)]'
+                      : sessionValidateResult
+                      ? 'bg-[rgba(224,32,32,0.85)]'
+                      : 'bg-[rgba(255,255,255,0.35)]'
+                  }`}
+                  aria-hidden="true"
+                />
+                {sessionValidateLoading
+                  ? 'Verificando token...'
+                  : sessionValidateResult
+                  ? sessionValidateResult.valido
+                    ? 'Token válido'
+                    : 'Token inválido'
+                  : 'Token não verificado'}
+              </button>
+
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">
+                Última verificação: <span className="text-white">{formatTimeShort(sessionValidateCheckedAt)}</span>
+              </p>
+            </div>
+
             <div className="md:hidden">
               <div className="flex items-center justify-between gap-3 px-1">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Visão geral</p>
@@ -2205,7 +2458,7 @@ const FaturamentosPage: React.FC = () => {
                   >
                     {INTERVAL_OPTIONS.map((option) => (
                       <option key={option} value={option}>
-                        {option}
+                        {formatIntervalLabel(option)}
                       </option>
                     ))}
                   </select>
@@ -2288,29 +2541,109 @@ const FaturamentosPage: React.FC = () => {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-6 sm:px-6">
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="card card-ring kpi-card">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Processos</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{summary.totalProcessos}</p>
-            <p className="mt-1 text-xs text-muted">Total retornado pelo webhook</p>
+      <main className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="card card-ring kpi-card flex min-h-[172px] flex-col justify-between">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Processos</p>
+              <span className="badge badge-soft text-[10px] tracking-[0.16em]">
+                Exibindo {formatInt(visibleNowCount)}
+              </span>
+            </div>
+
+            <div className="mt-3">
+              <p className="text-4xl font-semibold tabular-nums text-white">{formatInt(summary.totalProcessos)}</p>
+              <p className="mt-1 text-xs text-muted">Carregados para os filtros</p>
+            </div>
+
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">
+                <span>Progresso</span>
+                <span className="tabular-nums text-white">
+                  {summary.totalProcessos > 0
+                    ? `${formatInt(visibleNowCount)} / ${formatInt(summary.totalProcessos)}`
+                    : '—'}
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">
+                <div
+                  className="h-full rounded-full bg-[rgba(0,112,80,0.70)]"
+                  style={{ width: `${visibleNowPct}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                {formatInt(loadedPages.length)} / {formatInt(totalPages)} páginas consultadas
+              </p>
+            </div>
           </div>
-          <div className="card card-ring kpi-card">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Status distintos</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{summary.statusUnicos}</p>
-            <p className="mt-1 text-xs text-muted">Quantidade de status encontrados</p>
+
+          <div className="card card-ring kpi-card flex min-h-[172px] flex-col justify-between">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Status distintos</p>
+              <span className="badge badge-soft text-[10px] tracking-[0.16em]">
+                {formatInt(summary.statusUnicos)}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {distinctStatusList.length === 0 ? (
+                <p className="text-sm text-muted">—</p>
+              ) : (
+                distinctStatusVisible.map((entry) => (
+                  <div
+                    key={entry.status}
+                    className="flex items-center justify-between gap-3 rounded-2xl bg-[rgba(255,255,255,0.03)] px-3 py-2"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotClassName(entry.status)}`} />
+                      <span className="truncate text-sm font-semibold text-white">{formatStatusTitle(entry.status)}</span>
+                    </div>
+                    <span className="tabular-nums text-sm font-semibold text-white">{formatInt(entry.count)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+            {distinctStatusHasMore && (
+              <button
+                type="button"
+                onClick={() => setDistinctStatusesExpanded((prev) => !prev)}
+                className="btn btn-ghost mt-2 w-fit text-xs"
+              >
+                {distinctStatusesExpanded ? 'Ver menos' : `Ver todos (${formatInt(distinctStatusList.length)})`}
+              </button>
+            )}
           </div>
-          <div className="card card-ring kpi-card">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Notas emitidas</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{summary.emitidas}</p>
-            <p className="mt-1 text-xs text-muted">Com `data_nfse` disponível</p>
-          </div>
-          <div className="card card-ring kpi-card">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Última atualização</p>
-            <p className="mt-2 text-base font-semibold text-white">
-              {lastUpdated ? formatDateTime(lastUpdated.toISOString()) : '—'}
-            </p>
-            <p className="mt-1 text-xs text-muted">Horário da última consulta manual</p>
+
+          <div className="card card-ring kpi-card flex min-h-[172px] flex-col justify-between">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Notas emitidas</p>
+              <span className="badge badge-soft text-[10px] tracking-[0.16em]">
+                {summary.totalProcessos > 0 ? `${formatInt(emitidasPct)}%` : '—'}
+              </span>
+            </div>
+
+            <div className="mt-3">
+              <p className="text-4xl font-semibold tabular-nums text-white">{formatInt(summary.emitidas)}</p>
+              <p className="mt-1 text-xs text-muted">Com data NFSe disponível</p>
+            </div>
+
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">
+                <span>Última emissão</span>
+                <span className="text-white">{summary.ultimaEmissao ?? '—'}</span>
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[rgba(255,255,255,0.06)]">
+                <div
+                  className="h-full rounded-full bg-[rgba(144,192,48,0.75)]"
+                  style={{ width: `${emitidasPct}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                {summary.totalProcessos > 0
+                  ? `${formatInt(summary.emitidas)} de ${formatInt(summary.totalProcessos)} processos`
+                  : '—'}
+              </p>
+            </div>
           </div>
         </section>
 
@@ -2340,7 +2673,7 @@ const FaturamentosPage: React.FC = () => {
           )}
 
           <div className="mt-6 space-y-6">
-            {sortedItems.map((item) => {
+            {visibleItems.map((item) => {
               const cliente =
                 extractTagValue(item.xmlRetorno, 'nome_razao_social') ??
                 extractTagValue(item.xml, 'nome_razao_social');
@@ -2519,11 +2852,72 @@ const FaturamentosPage: React.FC = () => {
                       </div>
                     </details>
                   </article>
-              );
-            })}
+                );
+              })}
+
+            <div ref={loadMoreSentinelRef} className="h-px w-full" aria-hidden="true" />
+
+            {!error && items.length > 0 && filteredItems.length > 0 && (
+              <div className="flex flex-col items-center justify-center gap-3 py-2 text-center">
+                {loadMoreError ? (
+                  <div className="card card-ring w-full bg-[rgba(224,32,32,0.08)] px-4 py-3 text-sm text-brand-red">
+                    <p className="font-semibold">Falha ao carregar mais processos.</p>
+                    <p className="mt-1 text-xs text-muted">{loadMoreError}</p>
+                    <button type="button" onClick={() => void handleLoadMore()} className="btn btn-ghost mt-3 text-sm">
+                      Tentar novamente
+                    </button>
+                  </div>
+                ) : isLoadingMore ? (
+                  <div className="text-xs text-muted">Carregando mais 10...</div>
+                ) : Math.max(LIST_BATCH_SIZE, visibleCount) < sortedItems.length || loadedPages.length < totalPages ? (
+                  <button type="button" onClick={() => void handleLoadMore()} className="btn btn-ghost text-sm">
+                    Carregar mais
+                  </button>
+                ) : (
+                  <div className="text-xs text-subtle">Fim da lista.</div>
+                )}
+              </div>
+            )}
           </div>
         </section>
       </main>
+
+      <div className="fixed inset-x-0 bottom-0 z-40">
+        <div className="bottombar-glass bottombar-safe">
+          <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
+            <div className="flex min-h-[3.25rem] flex-col items-start justify-between gap-2 py-2 text-xs text-subtle sm:flex-row sm:items-center">
+              <p className="min-w-0 truncate">
+                Última atualização:{' '}
+                <span className="text-white">
+                  {lastUpdated ? formatDateTime(lastUpdated.toISOString()) : '—'}
+                </span>
+              </p>
+              <p className="shrink-0 text-muted">
+                {error ? (
+                  <span className="text-brand-red">Falha ao carregar dados</span>
+                ) : isLoading ? (
+                  'Atualizando...'
+                ) : isLoadingMore ? (
+                  'Carregando mais...'
+                ) : (
+                  <>
+                    Intervalo <span className="text-white">{formatIntervalLabel(activeInterval)}</span> · Status{' '}
+                    <span className="text-white">
+                      {activeStatus ? formatStatusTitle(activeStatus) : 'Todos'}
+                    </span>
+                    {draftFilter.trim() ? (
+                      <>
+                        {' '}
+                        · Draft <span className="text-white">{draftFilter.trim()}</span>
+                      </>
+                    ) : null}
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {showNotifications && (
         <div
@@ -3016,7 +3410,7 @@ const FaturamentosPage: React.FC = () => {
                 <div className="space-y-3">
                   <button
                     type="button"
-                    onClick={handleValidateSession}
+                    onClick={() => void validateSession()}
                     disabled={sessionValidateLoading}
                     className="btn btn-ghost inline-flex items-center gap-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
